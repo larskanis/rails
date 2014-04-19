@@ -1,8 +1,10 @@
+# Make sure we're using pg high enough for type casts
+gem 'pg', '~> 0.18'
+
 require 'active_record/connection_adapters/abstract_adapter'
 require 'active_record/connection_adapters/statement_pool'
 require 'active_record/connection_adapters/postgresql/oid'
 require 'active_record/connection_adapters/postgresql/cast'
-require 'active_record/connection_adapters/postgresql/array_parser'
 require 'active_record/connection_adapters/postgresql/quoting'
 require 'active_record/connection_adapters/postgresql/schema_statements'
 require 'active_record/connection_adapters/postgresql/database_statements'
@@ -10,10 +12,7 @@ require 'active_record/connection_adapters/postgresql/referential_integrity'
 require 'active_record/connection_adapters/postgresql/column'
 require 'arel/visitors/bind_visitor'
 
-# Make sure we're using pg high enough for PGResult#values
-gem 'pg', '~> 0.11'
 require 'pg'
-
 require 'ipaddr'
 
 module ActiveRecord

@@ -183,12 +183,12 @@ module ActiveRecord
           # Limit, precision, and scale are all handled by the superclass.
           column_definitions(table_name).map do |column_name, type, default, notnull, oid, fmod|
             oid = get_oid_type(oid.to_i, fmod.to_i, column_name)
-            PostgreSQLColumn.new(column_name, default, oid, type, notnull == 'f')
+            PostgreSQLColumn.new(column_name, default, oid, type, !notnull)
           end
         end
 
         def column_for(table_name, column_name) #:nodoc:
-          columns(table_name).detect { |c| c.name == column_name.to_s } 
+          columns(table_name).detect { |c| c.name == column_name.to_s }
         end
 
         # Returns the current database name.

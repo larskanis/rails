@@ -1,10 +1,17 @@
 require 'active_record/connection_adapters/abstract_adapter'
+require 'pg'
 
 module ActiveRecord
   module ConnectionAdapters
     class PostgreSQLAdapter < AbstractAdapter
       module OID
         class Type
+          attr_reader :pg_type
+
+          def initialize
+            @pg_type = nil
+          end
+
           def type; end
           def simplified_type(sql_type); type end
 
@@ -54,11 +61,19 @@ module ActiveRecord
         end
 
         class Bytea < Type
+          def initialize
+            @pg_type = PG::SimpleType.new encoder: PG::TextEncoder::Bytea, decoder: PG::TextDecoder::Bytea, name: type
+          end
+
           def type; :binary end
 
           def type_cast(value)
             return if value.nil?
-            PGconn.unescape_bytea value
+            if value.encoding == Encoding::ASCII_8BIT
+              value
+            else
+              PGconn.unescape_bytea value
+            end
           end
         end
 
@@ -126,11 +141,17 @@ module ActiveRecord
           attr_reader :subtype
           def initialize(subtype)
             @subtype = subtype
+
+            pg_subtype = @subtype.pg_type ||
+              PG::SimpleType.new(decoder: lambda { |value, _, _| @subtype.type_cast value } )
+
+            @pg_type = PG::CompositeType.new encoder: PG::TextEncoder::Array, decoder: PG::TextDecoder::Array,
+              name: "#{type}[]", elements_type: pg_subtype
           end
 
           def type_cast(value)
             if ::String === value
-              ConnectionAdapters::PostgreSQLColumn.string_to_array value, @subtype
+              @pg_type.decode(value)
             else
               value
             end
@@ -187,6 +208,10 @@ This is not reliable and will be removed in the future.
         end
 
         class Integer < Type
+          def initialize
+            @pg_type = PG::SimpleType.new encoder: PG::TextEncoder::Integer, decoder: PG::TextDecoder::Integer, name: type
+          end
+
           def type; :integer end
 
           def type_cast(value)
@@ -197,6 +222,10 @@ This is not reliable and will be removed in the future.
         end
 
         class Boolean < Type
+          def initialize
+            @pg_type = PG::SimpleType.new encoder: PG::TextEncoder::Boolean, decoder: PG::TextDecoder::Boolean, name: type
+          end
+
           def type; :boolean end
 
           def type_cast(value)
@@ -251,6 +280,10 @@ This is not reliable and will be removed in the future.
         end
 
         class Float < Type
+          def initialize
+            @pg_type = PG::SimpleType.new encoder: PG::TextEncoder::Float, decoder: PG::TextDecoder::Float, name: type
+          end
+
           def type; :float end
 
           def type_cast(value)

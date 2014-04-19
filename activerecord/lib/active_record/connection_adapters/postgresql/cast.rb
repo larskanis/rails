@@ -118,8 +118,9 @@ module ActiveRecord
           end
         end
 
+        # FIXME: This method is no longer used internally. Remove?
         def string_to_array(string, oid)
-          parse_pg_array(string).map {|val| type_cast_array(oid, val)}
+          PostgreSQLAdapter::OID::Array.new(oid).type_cast(string)
         end
 
         private
@@ -152,14 +153,6 @@ module ActiveRecord
               value = value.gsub(/\\/, ARRAY_ESCAPE)
               value.gsub!(/"/,"\\\"")
               "\"#{value}\""
-            end
-          end
-
-          def type_cast_array(oid, value)
-            if ::Array === value
-              value.map {|item| type_cast_array(oid, item)}
-            else
-              oid.type_cast value
             end
           end
       end

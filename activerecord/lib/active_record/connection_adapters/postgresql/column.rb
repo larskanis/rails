@@ -30,7 +30,6 @@ module ActiveRecord
       # :stopdoc:
       class << self
         include ConnectionAdapters::PostgreSQLColumn::Cast
-        include ConnectionAdapters::PostgreSQLColumn::ArrayParser
         attr_accessor :money_precision
       end
       # :startdoc:

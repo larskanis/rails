@@ -159,11 +159,15 @@ module ActiveRecord
           execute_and_clear(sql, name, binds) do |result|
             types = {}
             fields = result.fields
-            fields.each_with_index do |fname, i|
+            pg_types = fields.each_with_index.map do |fname, i|
               ftype = result.ftype i
               fmod  = result.fmod i
-              types[fname] = get_oid_type(ftype, fmod, fname)
+              type = get_oid_type(ftype, fmod, fname)
+              types[fname] = type
+              type.pg_type
             end
+            # FIXME: the ColumnMapping object could be cached in the StatementPool
+            result.column_mapping = PG::ColumnMapping.new pg_types
             ActiveRecord::Result.new(fields, result.values, types)
           end
         end
