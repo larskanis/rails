@@ -62,7 +62,7 @@ module ActiveRecord
 
         class Bytea < Type
           def initialize
-            @pg_type = PG::SimpleType.new encoder: PG::TextEncoder::Bytea, decoder: PG::TextDecoder::Bytea, name: type
+            @pg_type = PG::SimpleType.new encoder: PG::TextEncoder::BYTEA, decoder: PG::TextDecoder::BYTEA, name: type
           end
 
           def type; :binary end
@@ -145,7 +145,7 @@ module ActiveRecord
             pg_subtype = @subtype.pg_type ||
               PG::SimpleType.new(decoder: lambda { |value, _, _| @subtype.type_cast value } )
 
-            @pg_type = PG::CompositeType.new encoder: PG::TextEncoder::Array, decoder: PG::TextDecoder::Array,
+            @pg_type = PG::CompositeType.new encoder: PG::TextEncoder::ARRAY, decoder: PG::TextDecoder::ARRAY,
               name: "#{type}[]", elements_type: pg_subtype
           end
 
@@ -209,7 +209,7 @@ This is not reliable and will be removed in the future.
 
         class Integer < Type
           def initialize
-            @pg_type = PG::SimpleType.new encoder: PG::TextEncoder::Integer, decoder: PG::TextDecoder::Integer, name: type
+            @pg_type = PG::SimpleType.new encoder: PG::TextEncoder::INTEGER, decoder: PG::TextDecoder::INTEGER, name: type
           end
 
           def type; :integer end
@@ -223,7 +223,7 @@ This is not reliable and will be removed in the future.
 
         class Boolean < Type
           def initialize
-            @pg_type = PG::SimpleType.new encoder: PG::TextEncoder::Boolean, decoder: PG::TextDecoder::Boolean, name: type
+            @pg_type = PG::SimpleType.new encoder: PG::TextEncoder::BOOLEAN, decoder: PG::TextDecoder::BOOLEAN, name: type
           end
 
           def type; :boolean end
@@ -281,7 +281,7 @@ This is not reliable and will be removed in the future.
 
         class Float < Type
           def initialize
-            @pg_type = PG::SimpleType.new encoder: PG::TextEncoder::Float, decoder: PG::TextDecoder::Float, name: type
+            @pg_type = PG::SimpleType.new encoder: PG::TextEncoder::FLOAT, decoder: PG::TextDecoder::FLOAT, name: type
           end
 
           def type; :float end
