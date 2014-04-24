@@ -112,6 +112,10 @@ module ActiveRecord
         @oid_type.type_cast value
       end
 
+      def pg_type
+        @oid_type.pg_type
+      end
+
       def accessor
         @oid_type.accessor
       end

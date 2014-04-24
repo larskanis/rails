@@ -73,6 +73,9 @@ module ActiveRecord
     class PostgreSQLAdapter < AbstractAdapter
       class ColumnDefinition < ActiveRecord::ConnectionAdapters::ColumnDefinition
         attr_accessor :array
+
+        def pg_type
+        end
       end
 
       module ColumnMethods
@@ -675,12 +678,23 @@ module ActiveRecord
 
         def exec_cache(sql, name, binds)
           stmt_key = prepare_statement(sql)
-          type_casted_binds = binds.map { |col, val|
-            [col, type_cast(val, col)]
-          }
+
+          pg_types = []
+          type_casted_binds = binds.map do |col, val|
+            if col && col.pg_type && col.pg_type.encoder
+              pg_types << col.pg_type
+              [col, val]
+            else
+              pg_types << nil
+              [col, type_cast(val, col)]
+            end
+          end
 
           log(sql, name, type_casted_binds, stmt_key) do
-            @connection.send_query_prepared(stmt_key, type_casted_binds.map { |_, val| val })
+            # FIXME: the ColumnMapping object could be cached in the StatementPool
+            pg_column_mapping = PG::ColumnMapping.new pg_types
+            type_casted_values = type_casted_binds.map(&:last)
+            @connection.send_query_prepared(stmt_key, type_casted_values, 0, pg_column_mapping)
             @connection.block
             @connection.get_last_result
           end

@@ -62,7 +62,7 @@ module ActiveRecord
 
         class Bytea < Type
           def initialize
-            @pg_type = PG::SimpleType.new encoder: PG::TextEncoder::BYTEA, decoder: PG::TextDecoder::BYTEA, name: type
+            @pg_type = PG::SimpleType.new decoder: PG::TextDecoder::BYTEA, name: type
           end
 
           def type; :binary end
@@ -145,8 +145,10 @@ module ActiveRecord
             pg_subtype = @subtype.pg_type ||
               PG::SimpleType.new(decoder: lambda { |value, _, _| @subtype.type_cast value } )
 
-            @pg_type = PG::CompositeType.new encoder: PG::TextEncoder::ARRAY, decoder: PG::TextDecoder::ARRAY,
+            @pg_type = PG::CompositeType.new decoder: PG::TextDecoder::ARRAY,
               name: "#{type}[]", elements_type: pg_subtype
+
+            @pg_type.encoder = PG::TextEncoder::ARRAY if pg_subtype.encoder
           end
 
           def type_cast(value)

@@ -68,18 +68,17 @@ module ActiveRecord
         end
 
         def array_to_string(value, column, adapter)
-          casted_values = value.map do |val|
-            if String === val
-              if val == "NULL"
-                "\"#{val}\""
-              else
-                quote_and_escape(adapter.type_cast(val, column, true))
-              end
-            else
-              adapter.type_cast(val, column, true)
-            end
+          pg_type = column.pg_type
+          if pg_type && pg_type.encoder
+            # Use pg's internal type encoder
+            pg_type.encode(value)
+          else
+            # Use our own type encoders behind pg's array encoder.
+            pg_subtype = PG::SimpleType.new(encoder: lambda { |value| adapter.type_cast(value, column).to_s } )
+            pg_type = PG::CompositeType.new encoder: PG::TextEncoder::ARRAY,
+                elements_type: pg_subtype
+            pg_type.encode(value)
           end
-          "{#{casted_values.join(',')}}"
         end
 
         def range_to_string(object)
@@ -140,19 +139,6 @@ module ActiveRecord
               else
                 '"%s"' % value.to_s.gsub(/(["\\])/, '\\\\\1')
               end
-            end
-          end
-
-          ARRAY_ESCAPE = "\\" * 2 * 2 # escape the backslash twice for PG arrays
-
-          def quote_and_escape(value)
-            case value
-            when "NULL", Numeric
-              value
-            else
-              value = value.gsub(/\\/, ARRAY_ESCAPE)
-              value.gsub!(/"/,"\\\"")
-              "\"#{value}\""
             end
           end
       end
