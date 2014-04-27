@@ -157,6 +157,7 @@ module ActiveRecord
 
         def exec_query(sql, name = 'SQL', binds = [])
           execute_and_clear(sql, name, binds) do |result|
+            # FIXME: ColumnMapping, types and fields objects could be cached in the StatementPool
             types = {}
             fields = result.fields
             pg_types = fields.each_with_index.map do |fname, i|
@@ -166,7 +167,6 @@ module ActiveRecord
               types[fname] = type
               type.pg_type
             end
-            # FIXME: the ColumnMapping object could be cached in the StatementPool
             result.column_mapping = PG::ColumnMapping.new pg_types
             ActiveRecord::Result.new(fields, result.values, types)
           end
