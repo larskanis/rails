@@ -74,7 +74,7 @@ module ActiveRecord
             pg_type.encode(value)
           else
             # Use our own type encoders behind pg's array encoder.
-            pg_subtype = PG::SimpleType.new(encoder: lambda { |value| adapter.type_cast(value, column).to_s } )
+            pg_subtype = PG::SimpleType.new(encoder: lambda { |val| adapter.type_cast(val, column).to_s } )
             pg_type = PG::CompositeType.new encoder: PG::TextEncoder::ARRAY,
                 elements_type: pg_subtype
             pg_type.encode(value)
