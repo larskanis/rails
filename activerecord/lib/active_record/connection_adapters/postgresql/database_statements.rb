@@ -157,18 +157,36 @@ module ActiveRecord
 
         def exec_query(sql, name = 'SQL', binds = [])
           execute_and_clear(sql, name, binds) do |result|
-            # FIXME: ColumnMapping, types and fields objects could be cached in the StatementPool
-            types = {}
-            fields = result.fields
-            pg_types = fields.each_with_index.map do |fname, i|
-              ftype = result.ftype i
-              fmod  = result.fmod i
-              type = get_oid_type(ftype, fmod, fname)
-              types[fname] = type
-              type.pg_type
+            pe = result.instance_variable_get :@pool_entry if result.instance_variable_defined? :@pool_entry
+
+            if pe && pe.dec_column_mapping
+              # Use values from statement cache
+              column_mapping = pe.dec_column_mapping
+              types = pe.types
+              field_names = pe.field_names
+            else
+              types = {}
+              pg_types = []
+              field_names = result.fields
+              field_names.each_with_index do |fname, i|
+                ftype = result.ftype i
+                fmod  = result.fmod i
+                type = get_oid_type(ftype, fmod, fname)
+                types[fname] = type
+                pg_types << type.pg_type
+              end
+              column_mapping = PG::ColumnMapping.new pg_types
+
+              if pe
+                # store values in statement cache
+                pe.dec_column_mapping = column_mapping
+                pe.types = types
+                pe.field_names = field_names
+              end
             end
-            result.column_mapping = PG::ColumnMapping.new pg_types
-            ActiveRecord::Result.new(fields, result.values, types)
+
+            result.column_mapping = column_mapping
+            ActiveRecord::Result.new(field_names, result.values, types)
           end
         end
 
