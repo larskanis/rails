@@ -667,9 +667,9 @@ module ActiveRecord
         FEATURE_NOT_SUPPORTED = "0A000" #:nodoc:
 
         def execute_and_clear(sql, name, binds)
-          result = without_prepared_statement?(binds) ? exec_no_cache(sql, name, binds) :
-                                                        exec_cache(sql, name, binds)
-          ret = yield result
+          result, pool_entry = without_prepared_statement?(binds) ? exec_no_cache(sql, name, binds) :
+                                                                    exec_cache(sql, name, binds)
+          ret = yield(result, pool_entry)
           result.clear
           ret
         end
@@ -702,9 +702,7 @@ module ActiveRecord
             type_casted_values = type_casted_binds.map(&:last)
             @connection.send_query_prepared(pe.stmt_key, type_casted_values, 0, pe.enc_column_mapping)
             @connection.block
-            res = @connection.get_last_result
-            res.instance_variable_set :@pool_entry, pe
-            res
+            [@connection.get_last_result, pe]
           end
         rescue ActiveRecord::StatementInvalid => e
           pgerror = e.original_exception
