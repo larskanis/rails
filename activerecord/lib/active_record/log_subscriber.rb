@@ -27,6 +27,14 @@ module ActiveRecord
           value = value[:value] if value.is_a?(Hash)
           value = "<#{value.bytesize} bytes of binary data>"
         end
+        if column.respond_to?(:pg_type) && column.pg_type && column.pg_type.encoder
+          # PG adapter does type casts in C before transmission to the server
+          # without allocation of type casted ruby values.
+          # Thats why we encode the value and decode it back to ruby
+          # representation in order to get a reasonable log output.
+          value = column.pg_type.encode(value)
+          value = column.pg_type.decode(value)
+        end
 
         [column.name, value]
       else
