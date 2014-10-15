@@ -1,3 +1,8 @@
+*   Make use of new type cast capabilities of the pg gem for PostgreSQL.
+    This improves speed of cached queries up to 50%.
+
+    *Lars Kanis*
+
 *   `ActiveRecord::ReadOnlyRecord` now has a descriptive message.
 
     *Franky W.*
