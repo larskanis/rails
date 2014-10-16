@@ -113,8 +113,8 @@ class TimestampTest < ActiveRecord::TestCase
     ActiveRecord::Base.connection.create_table(:foos) do |t|
       t.timestamps :null => true, :precision => 4
     end
-    assert_equal '4', pg_datetime_precision('foos', 'created_at')
-    assert_equal '4', pg_datetime_precision('foos', 'updated_at')
+    assert_equal 4, pg_datetime_precision('foos', 'created_at')
+    assert_equal 4, pg_datetime_precision('foos', 'updated_at')
   end
 
   def test_bc_timestamp

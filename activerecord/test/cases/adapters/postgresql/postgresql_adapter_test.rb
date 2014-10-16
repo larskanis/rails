@@ -63,7 +63,7 @@ module ActiveRecord
       def test_insert_sql_with_proprietary_returning_clause
         with_example_table do
           id = @connection.insert_sql("insert into ex (number) values(5150)", nil, "number")
-          assert_equal "5150", id
+          assert_equal 5150, id
         end
       end
 
