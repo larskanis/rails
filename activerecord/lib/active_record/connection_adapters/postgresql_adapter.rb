@@ -249,6 +249,29 @@ module ActiveRecord
           raise "Your version of PostgreSQL (#{postgresql_version}) is too old, please upgrade!"
         end
 
+        # Enable optimized encoders for selected object types.
+        # This is used for adapter-internal queries and if column informations
+        # are not available for the given query bind parameter.
+        enc_tm = ::PG::TypeMapByClass.new
+        enc_tm[Integer] = ::PG::TextEncoder::Integer.new
+        enc_tm[TrueClass] = ::PG::TextEncoder::Boolean.new
+        enc_tm[FalseClass] = ::PG::TextEncoder::Boolean.new
+        enc_tm[Float] = ::PG::TextEncoder::Float.new
+        @connection.type_map_for_queries = enc_tm
+
+        # Enable type casted output for selected OIDs.
+        # This is used for all adapter-internal queries and queries executed per
+        # PostgreSQLAdapter#query, #execute and #select_* methods.
+        dec_tm = ::PG::TypeMapByOid.new
+        dec_tm.add_coder ::PG::TextDecoder::Integer.new oid: 20, name: 'int8'
+        dec_tm.add_coder ::PG::TextDecoder::Integer.new oid: 21, name: 'int2'
+        dec_tm.add_coder ::PG::TextDecoder::Integer.new oid: 23, name: 'int4'
+        dec_tm.add_coder ::PG::TextDecoder::Integer.new oid: 26, name: 'oid'
+        dec_tm.add_coder ::PG::TextDecoder::Boolean.new oid: 16, name: 'bool'
+        dec_tm.add_coder ::PG::TextDecoder::Float.new oid: 700, name: 'float4'
+        dec_tm.add_coder ::PG::TextDecoder::Float.new oid: 701, name: 'float8'
+        @connection.type_map_for_results = dec_tm
+
         @type_map = Type::HashLookupTypeMap.new
         initialize_type_map(type_map)
         @local_tz = execute('SHOW TIME ZONE', 'SCHEMA').first["TimeZone"]
