@@ -10,6 +10,7 @@ require 'active_record/connection_adapters/postgresql/column'
 require 'active_record/connection_adapters/postgresql/oid'
 require 'active_record/connection_adapters/postgresql/quoting'
 require 'active_record/connection_adapters/postgresql/referential_integrity'
+require 'active_record/connection_adapters/postgresql/result'
 require 'active_record/connection_adapters/postgresql/schema_definitions'
 require 'active_record/connection_adapters/postgresql/schema_statements'
 require 'active_record/connection_adapters/postgresql/database_statements'
@@ -606,9 +607,7 @@ module ActiveRecord
         def execute_and_clear(sql, name, binds)
           result, pool_entry = without_prepared_statement?(binds) ? exec_no_cache(sql, name, binds) :
                                                                     exec_cache(sql, name, binds)
-          ret = yield(result, pool_entry)
-          result.clear
-          ret
+          yield(result, pool_entry)
         end
 
         def exec_no_cache(sql, name, binds)

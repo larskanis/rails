@@ -191,7 +191,7 @@ module ActiveRecord
             end
 
             result.type_map = type_map
-            ActiveRecord::Result.new(field_names, result.values, types)
+            ActiveRecord::ConnectionAdapters::PostgreSQL::Result.new(field_names, result, types)
           end
         end
 
