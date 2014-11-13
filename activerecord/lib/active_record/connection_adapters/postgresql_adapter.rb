@@ -10,6 +10,7 @@ require 'active_record/connection_adapters/postgresql/column'
 require 'active_record/connection_adapters/postgresql/oid'
 require 'active_record/connection_adapters/postgresql/quoting'
 require 'active_record/connection_adapters/postgresql/referential_integrity'
+require 'active_record/connection_adapters/postgresql/result'
 require 'active_record/connection_adapters/postgresql/schema_definitions'
 require 'active_record/connection_adapters/postgresql/schema_statements'
 require 'active_record/connection_adapters/postgresql/database_statements'
@@ -240,6 +241,7 @@ module ActiveRecord
         # @local_tz is initialized as nil to avoid warnings when connect tries to use it
         @local_tz = nil
         @table_alias_length = nil
+        @pending_result = nil
 
         connect
         @statements = StatementPool.new @connection,
@@ -282,6 +284,7 @@ module ActiveRecord
 
       # Clears the prepared statements cache.
       def clear_cache!
+        finish_streaming
         @statements.clear
       end
 
@@ -291,6 +294,7 @@ module ActiveRecord
 
       # Is this connection alive and ready for queries?
       def active?
+        finish_streaming
         @connection.query 'SELECT 1'
         true
       rescue PGError
@@ -300,6 +304,7 @@ module ActiveRecord
       # Close then reopen the connection.
       def reconnect!
         super
+        finish_streaming
         @connection.reset
         configure_connection
       end
@@ -318,6 +323,7 @@ module ActiveRecord
       # method does nothing.
       def disconnect!
         super
+        finish_streaming
         @connection.close rescue nil
       end
 
@@ -604,24 +610,56 @@ module ActiveRecord
 
         FEATURE_NOT_SUPPORTED = "0A000" #:nodoc:
 
+        def finish_streaming
+          if @pending_result
+            # enforce fetching of not yet received result rows
+            @pending_result.finish_streaming
+            @pending_result = nil
+          end
+        end
+
         def execute_and_clear(sql, name, binds)
-          result, pool_entry = without_prepared_statement?(binds) ? exec_no_cache(sql, name, binds) :
-                                                                    exec_cache(sql, name, binds)
-          ret = yield(result, pool_entry)
+          meth = without_prepared_statement?(binds) ? :send_no_cache : :send_cache
+          result = send(meth, sql, name, binds) do
+            @connection.block
+            @connection.get_last_result
+          end
+
+          ret = yield(result)
+
           result.clear
           ret
         end
 
-        def exec_no_cache(sql, name, binds)
-          @connection.send_query(sql, [])
+        def execute_and_stream(sql, name, binds)
+          meth = without_prepared_statement?(binds) ? :send_no_cache : :send_cache
+          send(meth, sql, name, binds) do |pool_entry|
+            @connection.set_single_row_mode
 
-          log(sql, name, binds) do
-            @connection.block
-            @connection.get_last_result
+            on_error = proc do |e|
+              raise translate_exception_class(e, sql)
+            end
+            ar_res = ActiveRecord::ConnectionAdapters::PostgreSQL::Result.new(@connection, on_error)
+
+            # Store the result connection wide. Other queries, that are executed while streaming
+            # is running, can finish streaming before sending another query, this way.
+            @pending_result = ar_res
+
+            yield(ar_res, pool_entry)
           end
         end
 
-        def exec_cache(sql, name, binds)
+        def send_no_cache(sql, name, binds, stream=false)
+          finish_streaming
+          log(sql, name, binds) do
+            @connection.send_query(sql, [])
+            yield
+          end
+        end
+
+        def send_cache(sql, name, binds)
+          finish_streaming
+
           pe = prepare_statement(sql)
 
           unless pe.enc_type_map
@@ -639,24 +677,14 @@ module ActiveRecord
           @connection.send_query_prepared(pe.stmt_key, type_casted_values, 0, pe.enc_type_map)
 
           log(sql, name, type_casted_binds, pe.stmt_key) do
-            # do an extra call to PG::Connection#block, because although
-            # get_last_result is GVL friendly, it doesn't stop on Ctrl-C
-            @connection.block
-            [@connection.get_last_result, pe]
+            yield pe
           end
-        rescue ActiveRecord::StatementInvalid => e
-          pgerror = e.original_exception
 
-          # Get the PG code for the failure.  Annoyingly, the code for
-          # prepared statements whose return value may have changed is
-          # FEATURE_NOT_SUPPORTED.  Check here for more details:
+        rescue ActiveRecord::StatementInvalid => e
+          # Annoyingly, the code for prepared statements whose return value may
+          # have changed is FEATURE_NOT_SUPPORTED.  Check here for more details:
           # http://git.postgresql.org/gitweb/?p=postgresql.git;a=blob;f=src/backend/utils/cache/plancache.c#l573
-          begin
-            code = pgerror.result.result_error_field(PGresult::PG_DIAG_SQLSTATE)
-          rescue
-            raise e
-          end
-          if FEATURE_NOT_SUPPORTED == code
+          if e.original_exception.is_a?(::PG::FeatureNotSupported)
             @statements.delete sql_key(sql)
             retry
           else
