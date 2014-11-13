@@ -161,7 +161,7 @@ module ActiveRecord
         end
 
         def exec_query(sql, name = 'SQL', binds = [])
-          execute_and_clear(sql, name, binds) do |result, pe|
+          execute_and_clear(sql, name, binds, true) do |result, pe|
 
             if pe && pe.dec_type_map
               # Use values from statement cache
@@ -191,7 +191,7 @@ module ActiveRecord
             end
 
             result.type_map = type_map
-            ActiveRecord::Result.new(field_names, result.values, types)
+            ActiveRecord::ConnectionAdapters::PostgreSQL::Result.new(field_names, result, @connection, types)
           end
         end
 

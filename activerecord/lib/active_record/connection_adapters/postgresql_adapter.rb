@@ -10,6 +10,7 @@ require 'active_record/connection_adapters/postgresql/column'
 require 'active_record/connection_adapters/postgresql/oid'
 require 'active_record/connection_adapters/postgresql/quoting'
 require 'active_record/connection_adapters/postgresql/referential_integrity'
+require 'active_record/connection_adapters/postgresql/result'
 require 'active_record/connection_adapters/postgresql/schema_definitions'
 require 'active_record/connection_adapters/postgresql/schema_statements'
 require 'active_record/connection_adapters/postgresql/database_statements'
@@ -604,19 +605,22 @@ module ActiveRecord
 
         FEATURE_NOT_SUPPORTED = "0A000" #:nodoc:
 
-        def execute_and_clear(sql, name, binds)
-          result, pool_entry = without_prepared_statement?(binds) ? exec_no_cache(sql, name, binds) :
-                                                                    exec_cache(sql, name, binds)
-          ret = yield(result, pool_entry)
-          result.clear
-          ret
+        def execute_and_clear(sql, name, binds, stream=false)
+          result, pool_entry = without_prepared_statement?(binds) ? exec_no_cache(sql, name, binds, stream) :
+                                                                    exec_cache(sql, name, binds, stream)
+          yield(result, pool_entry)
         end
 
-        def exec_no_cache(sql, name, binds)
-          log(sql, name, binds) { @connection.async_exec(sql, []) }
+        def exec_no_cache(sql, name, binds, stream=false)
+          log(sql, name, binds) do
+            @connection.send_query(sql, [])
+            @connection.set_single_row_mode if stream
+            @connection.block
+            stream ? @connection.get_result : @connection.get_last_result
+          end
         end
 
-        def exec_cache(sql, name, binds)
+        def exec_cache(sql, name, binds, stream=false)
           pe = prepare_statement(sql)
 
           unless pe.enc_type_map
@@ -633,8 +637,9 @@ module ActiveRecord
           log(sql, name, type_casted_binds, pe.stmt_key) do
             type_casted_values = type_casted_binds.map(&:last)
             @connection.send_query_prepared(pe.stmt_key, type_casted_values, 0, pe.enc_type_map)
+            @connection.set_single_row_mode if stream
             @connection.block
-            [@connection.get_last_result, pe]
+            stream ? [@connection.get_result, pe] : [@connection.get_last_result, pe]
           end
         rescue ActiveRecord::StatementInvalid => e
           pgerror = e.original_exception

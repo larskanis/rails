@@ -14,7 +14,7 @@ gem 'rack-cache', '~> 1.2'
 gem 'jquery-rails', '~> 4.0.0.beta2'
 gem 'coffee-rails', '~> 4.1.0'
 gem 'turbolinks'
-gem 'arel', github: 'rails/arel'
+gem 'arel', git: 'https://github.com/rails/arel'
 
 # require: false so bcrypt is loaded only when has_secure_password is used.
 # This is to avoid ActiveModel (and by extension the entire framework)
@@ -46,7 +46,7 @@ group :job do
   gem 'sneakers', '0.1.1.pre', require: false
   gem 'que', require: false
   gem 'backburner', require: false
-  gem 'qu-rails', github: "bkeepers/qu", branch: "master", require: false
+  gem 'qu-rails', git: "https://github.com/bkeepers/qu", branch: "master", require: false
   gem 'qu-redis', require: false
   gem 'delayed_job_active_record', require: false
   gem 'sequel', require: false
@@ -90,10 +90,10 @@ end
 platforms :jruby do
   gem 'json'
   if ENV['AR_JDBC']
-    gem 'activerecord-jdbcsqlite3-adapter', github: 'jruby/activerecord-jdbc-adapter', branch: 'master'
+    gem 'activerecord-jdbcsqlite3-adapter', git: 'https://github.com/jruby/activerecord-jdbc-adapter', branch: 'master'
     group :db do
-      gem 'activerecord-jdbcmysql-adapter', github: 'jruby/activerecord-jdbc-adapter', branch: 'master'
-      gem 'activerecord-jdbcpostgresql-adapter', github: 'jruby/activerecord-jdbc-adapter', branch: 'master'
+      gem 'activerecord-jdbcmysql-adapter', git: 'https://github.com/jruby/activerecord-jdbc-adapter', branch: 'master'
+      gem 'activerecord-jdbcpostgresql-adapter', git: 'https://github.com/jruby/activerecord-jdbc-adapter', branch: 'master'
     end
   else
     gem 'activerecord-jdbcsqlite3-adapter', '>= 1.3.0'
@@ -115,7 +115,7 @@ if ENV['ORACLE_ENHANCED']
   platforms :ruby do
     gem 'ruby-oci8', '~> 2.1'
   end
-  gem 'activerecord-oracle_enhanced-adapter', github: 'rsim/oracle-enhanced', branch: 'master'
+  gem 'activerecord-oracle_enhanced-adapter', git: 'https://github.com/rsim/oracle-enhanced', branch: 'master'
 end
 
 # A gem necessary for ActiveRecord tests with IBM DB
