@@ -2,21 +2,19 @@ module ActiveRecord
   module ConnectionAdapters
     module PostgreSQL
       class Result < ActiveRecord::Result
-        attr_reader :pgresult
+        attr_accessor :pgresult
+        attr_writer :column_types
+        attr_writer :columns
 
-        def initialize(columns, pgresult, conn, on_error, column_types = {}, stream_threshold=1000)
+        def initialize(conn, on_error, stream_threshold=1000)
           @connection   = conn
-          @pgresult     = pgresult
           @on_error     = on_error
-          @columns      = columns
+          @stream_threshold = stream_threshold
+          @pgresult     = nil
+          @columns      = nil
           @rows         = nil
           @hash_rows    = nil
-          @column_types = column_types
-          @stream_threshold = stream_threshold
-
-          # We freeze the strings to prevent them getting duped when
-          # used as keys in ActiveRecord::Base's @attributes hash
-          @frozen_columns = @columns.map { |c| c.dup.freeze }
+          @column_types = nil
         end
 
 #         def map(&block)
@@ -48,7 +46,7 @@ module ActiveRecord
         def each_pair
           return to_enum(__method__) unless block_given?
 
-          columns = @frozen_columns
+          columns = @columns
           rows.each do |row|
             yield columns, row
           end
@@ -61,12 +59,6 @@ module ActiveRecord
               @pgresult.stream_each_row{|r| rows << r }
               # Clear result queue
               @connection.get_last_result
-#               p @pgresult
-#               while pgresult=@connection.get_result
-#                 p pgresult
-#                 pgresult.check
-#                 pgresult.each_row{|r| rows << r }
-#               end
 #              $stdout.puts rows.inspect
 
               rows
@@ -105,7 +97,10 @@ module ActiveRecord
           hash = {}
 
           index = 0
-          columns = @frozen_columns
+
+          # The field_name strings are frozen when retrieved from the PG::Result object.
+          # This prevents them getting duped when used as keys in ActiveRecord::Base's @attributes hash
+          columns = @columns
           length = columns.length
 
           while index < length

@@ -163,17 +163,17 @@ module ActiveRecord
         end
 
         def exec_query(sql, name = 'SQL', binds = [])
-          execute_and_clear(sql, name, binds, true) do |result, pe|
-            @pending_result = result
-
+          execute_and_clear(sql, name, binds, true) do |ar_res, pe|
             if pe && pe.dec_type_map
               # Use values from statement cache
               type_map = pe.dec_type_map
-              types = pe.types
-              field_names = pe.field_names
+              ar_res.columns = pe.field_names
+              ar_res.column_types = pe.types
+              ar_res.pgresult = result = @connection.get_result.check
             else
               types = {}
               pg_types = []
+              ar_res.pgresult = result = @connection.get_result.check
               field_names = result.fields
               field_names.each_with_index do |fname, i|
                 ftype = result.ftype i
@@ -191,20 +191,13 @@ module ActiveRecord
                 pe.types = types
                 pe.field_names = field_names
               end
+              ar_res.columns = field_names
+              ar_res.column_types = types
             end
 
             result.type_map = type_map
-            if @pending_result_rows
-              ActiveRecord::Result.new(field_names, @pending_result_rows, types).tap{
-                @pending_result_rows = nil
-              }
-            else
-              on_error = proc do |e|
-                raise translate_exception_class(e, sql)
-              end
-  #             $stderr.puts [result, sql].inspect
-              @pending_result = ActiveRecord::ConnectionAdapters::PostgreSQL::Result.new(field_names, result, @connection, on_error, types)
-            end
+#             $stderr.puts [result, sql].inspect
+            ar_res
           end
         end
 

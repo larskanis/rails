@@ -242,7 +242,6 @@ module ActiveRecord
         @local_tz = nil
         @table_alias_length = nil
         @pending_result = nil
-        @pending_result_rows = nil
 
         connect
         @statements = StatementPool.new @connection,
@@ -613,18 +612,8 @@ module ActiveRecord
 
         def finish_streaming
           if @pending_result
-            if @pending_result.is_a?(PG::Result)
-              # Another database query is requested in the path to build a
-              # Result object. So we store the streamed result values
-              # temporary for later use in the Result object.
-              @pending_result_rows = @pending_result.stream_each_row.to_a
-
-              # Clear result queue
-              @connection.get_last_result
-            else
-              # enforce fetching of not yet received result rows
-              @pending_result.rows
-            end
+            # enforce fetching of not yet received result rows
+            @pending_result.rows
             @pending_result = nil
           end
         end
@@ -639,9 +628,20 @@ module ActiveRecord
           finish_streaming
           log(sql, name, binds) do
             @connection.send_query(sql, [])
-            @connection.set_single_row_mode if stream
-            @connection.block
-            stream ? @connection.get_result.check : @connection.get_last_result
+
+            if stream
+              @connection.set_single_row_mode
+
+              on_error = proc do |e|
+                raise translate_exception_class(e, sql)
+              end
+              @pending_result = ar_res = ActiveRecord::ConnectionAdapters::PostgreSQL::Result.new(@connection, on_error)
+
+              [ar_res, nil]
+            else
+              @connection.block
+              [@connection.get_last_result, nil]
+            end
           end
         end
 
@@ -664,9 +664,20 @@ module ActiveRecord
           log(sql, name, type_casted_binds, pe.stmt_key) do
             type_casted_values = type_casted_binds.map(&:last)
             @connection.send_query_prepared(pe.stmt_key, type_casted_values, 0, pe.enc_type_map)
-            @connection.set_single_row_mode if stream
-            @connection.block
-            stream ? [@connection.get_result.check, pe] : [@connection.get_last_result, pe]
+
+            if stream
+              @connection.set_single_row_mode
+
+              on_error = proc do |e|
+                raise translate_exception_class(e, sql)
+              end
+              @pending_result = ar_res = ActiveRecord::ConnectionAdapters::PostgreSQL::Result.new(@connection, on_error)
+
+              [ar_res, pe]
+            else
+              @connection.block
+              [@connection.get_last_result, pe]
+            end
           end
         rescue ActiveRecord::StatementInvalid => e
           pgerror = e.original_exception
