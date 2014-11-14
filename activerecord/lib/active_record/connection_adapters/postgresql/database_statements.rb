@@ -164,6 +164,7 @@ module ActiveRecord
 
         def exec_query(sql, name = 'SQL', binds = [])
           execute_and_clear(sql, name, binds, true) do |result, pe|
+            @pending_result = result
 
             if pe && pe.dec_type_map
               # Use values from statement cache
@@ -193,11 +194,17 @@ module ActiveRecord
             end
 
             result.type_map = type_map
-            on_error = proc do |e|
-              raise translate_exception_class(e, sql)
+            if @pending_result_rows
+              ActiveRecord::Result.new(field_names, @pending_result_rows, types).tap{
+                @pending_result_rows = nil
+              }
+            else
+              on_error = proc do |e|
+                raise translate_exception_class(e, sql)
+              end
+  #             $stderr.puts [result, sql].inspect
+              @pending_result = ActiveRecord::ConnectionAdapters::PostgreSQL::Result.new(field_names, result, @connection, on_error, types)
             end
-#             $stderr.puts [result, sql].inspect
-            @pending_result = ActiveRecord::ConnectionAdapters::PostgreSQL::Result.new(field_names, result, @connection, on_error, types)
           end
         end
 

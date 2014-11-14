@@ -59,11 +59,15 @@ module ActiveRecord
             if @pgresult.result_status == ::PG::PGRES_SINGLE_TUPLE
               rows = []
               @pgresult.stream_each_row{|r| rows << r }
-#              $stderr.puts rows.inspect
-
-              while pgresult=@connection.get_result
-                pgresult.check
-              end
+              # Clear result queue
+              @connection.get_last_result
+#               p @pgresult
+#               while pgresult=@connection.get_result
+#                 p pgresult
+#                 pgresult.check
+#                 pgresult.each_row{|r| rows << r }
+#               end
+#              $stdout.puts rows.inspect
 
               rows
             else

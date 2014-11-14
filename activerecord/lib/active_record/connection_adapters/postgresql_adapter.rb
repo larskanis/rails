@@ -242,6 +242,7 @@ module ActiveRecord
         @local_tz = nil
         @table_alias_length = nil
         @pending_result = nil
+        @pending_result_rows = nil
 
         connect
         @statements = StatementPool.new @connection,
@@ -612,8 +613,18 @@ module ActiveRecord
 
         def finish_streaming
           if @pending_result
-            # enforce fetching of not yet received result rows
-            @pending_result.rows
+            if @pending_result.is_a?(PG::Result)
+              # Another database query is requested in the path to build a
+              # Result object. So we store the streamed result values
+              # temporary for later use in the Result object.
+              @pending_result_rows = @pending_result.stream_each_row.to_a
+
+              # Clear result queue
+              @connection.get_last_result
+            else
+              # enforce fetching of not yet received result rows
+              @pending_result.rows
+            end
             @pending_result = nil
           end
         end
@@ -649,8 +660,6 @@ module ActiveRecord
           type_casted_binds = binds.map do |col, val|
             [col, type_cast(val, col)]
           end
-
-          finish_streaming
 
           log(sql, name, type_casted_binds, pe.stmt_key) do
             type_casted_values = type_casted_binds.map(&:last)
