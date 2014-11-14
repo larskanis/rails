@@ -241,6 +241,7 @@ module ActiveRecord
         # @local_tz is initialized as nil to avoid warnings when connect tries to use it
         @local_tz = nil
         @table_alias_length = nil
+        @pending_result = nil
 
         connect
         @statements = StatementPool.new @connection,
@@ -283,6 +284,7 @@ module ActiveRecord
 
       # Clears the prepared statements cache.
       def clear_cache!
+        finish_streaming
         @statements.clear
       end
 
@@ -292,6 +294,7 @@ module ActiveRecord
 
       # Is this connection alive and ready for queries?
       def active?
+        finish_streaming
         @connection.query 'SELECT 1'
         true
       rescue PGError
@@ -301,6 +304,7 @@ module ActiveRecord
       # Close then reopen the connection.
       def reconnect!
         super
+        finish_streaming
         @connection.reset
         configure_connection
       end
@@ -319,6 +323,7 @@ module ActiveRecord
       # method does nothing.
       def disconnect!
         super
+        finish_streaming
         @connection.close rescue nil
       end
 
@@ -605,6 +610,14 @@ module ActiveRecord
 
         FEATURE_NOT_SUPPORTED = "0A000" #:nodoc:
 
+        def finish_streaming
+          if @pending_result
+            # enforce fetching of not yet received result rows
+            @pending_result.rows
+            @pending_result = nil
+          end
+        end
+
         def execute_and_clear(sql, name, binds, stream=false)
           result, pool_entry = without_prepared_statement?(binds) ? exec_no_cache(sql, name, binds, stream) :
                                                                     exec_cache(sql, name, binds, stream)
@@ -612,15 +625,18 @@ module ActiveRecord
         end
 
         def exec_no_cache(sql, name, binds, stream=false)
+          finish_streaming
           log(sql, name, binds) do
             @connection.send_query(sql, [])
             @connection.set_single_row_mode if stream
             @connection.block
-            stream ? @connection.get_result : @connection.get_last_result
+            stream ? @connection.get_result.check : @connection.get_last_result
           end
         end
 
         def exec_cache(sql, name, binds, stream=false)
+          finish_streaming
+
           pe = prepare_statement(sql)
 
           unless pe.enc_type_map
@@ -634,12 +650,14 @@ module ActiveRecord
             [col, type_cast(val, col)]
           end
 
+          finish_streaming
+
           log(sql, name, type_casted_binds, pe.stmt_key) do
             type_casted_values = type_casted_binds.map(&:last)
             @connection.send_query_prepared(pe.stmt_key, type_casted_values, 0, pe.enc_type_map)
             @connection.set_single_row_mode if stream
             @connection.block
-            stream ? [@connection.get_result, pe] : [@connection.get_last_result, pe]
+            stream ? [@connection.get_result.check, pe] : [@connection.get_last_result, pe]
           end
         rescue ActiveRecord::StatementInvalid => e
           pgerror = e.original_exception

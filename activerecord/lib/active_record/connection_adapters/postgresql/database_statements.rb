@@ -143,6 +143,7 @@ module ActiveRecord
 
         # Queries the database and returns the results in an Array-like object
         def query(sql, name = nil) #:nodoc:
+          finish_streaming
           log(sql, name) do
             result_as_array @connection.async_exec(sql)
           end
@@ -151,6 +152,7 @@ module ActiveRecord
         # Executes an SQL statement, returning a PGresult object on success
         # or raising a PGError exception otherwise.
         def execute(sql, name = nil)
+          finish_streaming
           log(sql, name) do
             @connection.async_exec(sql)
           end
@@ -191,7 +193,11 @@ module ActiveRecord
             end
 
             result.type_map = type_map
-            ActiveRecord::ConnectionAdapters::PostgreSQL::Result.new(field_names, result, @connection, types)
+            on_error = proc do |e|
+              raise translate_exception_class(e, sql)
+            end
+#             $stderr.puts [result, sql].inspect
+            @pending_result = ActiveRecord::ConnectionAdapters::PostgreSQL::Result.new(field_names, result, @connection, on_error, types)
           end
         end
 

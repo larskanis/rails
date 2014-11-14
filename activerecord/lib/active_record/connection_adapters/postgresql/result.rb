@@ -4,9 +4,10 @@ module ActiveRecord
       class Result < ActiveRecord::Result
         attr_reader :pgresult
 
-        def initialize(columns, pgresult, conn, column_types = {}, stream_threshold=1000)
+        def initialize(columns, pgresult, conn, on_error, column_types = {}, stream_threshold=1000)
           @connection   = conn
           @pgresult     = pgresult
+          @on_error     = on_error
           @columns      = columns
           @rows         = nil
           @hash_rows    = nil
@@ -55,13 +56,31 @@ module ActiveRecord
 
         def rows
           @rows ||= begin
-            rows = @pgresult.stream_each_row.to_a
-#            $stderr.puts rows.inspect
+            if @pgresult.result_status == ::PG::PGRES_SINGLE_TUPLE
+              rows = []
+              @pgresult.stream_each_row{|r| rows << r }
+#              $stderr.puts rows.inspect
 
-            while @pgresult=@connection.get_result
+              while pgresult=@connection.get_result
+                pgresult.check
+              end
+
+              rows
+            else
+              while pgresult=@connection.get_result
+                pgresult.check
+              end
+              []
             end
-
-            rows
+          rescue ::PG::Error => e
+            if e.to_s =~ /no result received/
+              puts caller
+              rows
+            else
+              @on_error.call(e)
+            end
+          rescue => e
+            @on_error.call(e)
           end
           @rows
         end
