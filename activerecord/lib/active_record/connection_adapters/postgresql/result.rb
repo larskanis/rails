@@ -26,7 +26,7 @@ module ActiveRecord
         def initialize_copy(other)
           @pgresult     = pgresult
           @columns      = columns.dup
-          @rows         = rows.dup
+          @rows         = other.rows.dup
           @hash_rows    = nil
           @column_types = column_types.dup
         end
@@ -52,28 +52,22 @@ module ActiveRecord
           end
         end
 
+        def finish_streaming
+          rows if @pgresult
+        end
+
         def rows
           @rows ||= begin
             if @pgresult.result_status == ::PG::PGRES_SINGLE_TUPLE
-              rows = []
-              @pgresult.stream_each_row{|r| rows << r }
+              rows = @pgresult.stream_each_row.to_a
               # Clear result queue
               @connection.get_last_result
-#              $stdout.puts rows.inspect
+#           puts rows.inspect
 
               rows
             else
-              while pgresult=@connection.get_result
-                pgresult.check
-              end
+              @connection.get_last_result
               []
-            end
-          rescue ::PG::Error => e
-            if e.to_s =~ /no result received/
-              puts caller
-              rows
-            else
-              @on_error.call(e)
             end
           rescue => e
             @on_error.call(e)

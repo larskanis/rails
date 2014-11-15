@@ -613,39 +613,51 @@ module ActiveRecord
         def finish_streaming
           if @pending_result
             # enforce fetching of not yet received result rows
-            @pending_result.rows
+            @pending_result.finish_streaming
             @pending_result = nil
           end
         end
 
-        def execute_and_clear(sql, name, binds, stream=false)
-          result, pool_entry = without_prepared_statement?(binds) ? exec_no_cache(sql, name, binds, stream) :
-                                                                    exec_cache(sql, name, binds, stream)
-          yield(result, pool_entry)
+        def execute_and_clear(sql, name, binds)
+          meth = without_prepared_statement?(binds) ? :send_no_cache : :send_cache
+          result = send(meth, sql, name, binds) do
+            @connection.block
+            @connection.get_last_result
+          end
+
+          ret = yield(result)
+
+          result.clear
+          ret
         end
 
-        def exec_no_cache(sql, name, binds, stream=false)
-          finish_streaming
-          log(sql, name, binds) do
-            @connection.send_query(sql, [])
+        def execute_and_stream(sql, name, binds)
+          meth = without_prepared_statement?(binds) ? :send_no_cache : :send_cache
+          send(meth, sql, name, binds) do |pool_entry|
+            @connection.set_single_row_mode
 
-            if stream
-              @connection.set_single_row_mode
-
-              on_error = proc do |e|
-                raise translate_exception_class(e, sql)
-              end
-              @pending_result = ar_res = ActiveRecord::ConnectionAdapters::PostgreSQL::Result.new(@connection, on_error)
-
-              [ar_res, nil]
-            else
-              @connection.block
-              [@connection.get_last_result, nil]
+            on_error = proc do |e|
+              raise translate_exception_class(e, sql)
             end
+            ar_res = ActiveRecord::ConnectionAdapters::PostgreSQL::Result.new(@connection, on_error)
+
+            # Store the result connection wide. Other queries, that are executed while streaming
+            # is running, can finish streaming before sending another query, this way.
+            @pending_result = ar_res
+
+            yield(ar_res, pool_entry)
           end
         end
 
-        def exec_cache(sql, name, binds, stream=false)
+        def send_no_cache(sql, name, binds, stream=false)
+          finish_streaming
+          log(sql, name, binds) do
+            @connection.send_query(sql, [])
+            yield
+          end
+        end
+
+        def send_cache(sql, name, binds)
           finish_streaming
 
           pe = prepare_statement(sql)
@@ -664,34 +676,14 @@ module ActiveRecord
           log(sql, name, type_casted_binds, pe.stmt_key) do
             type_casted_values = type_casted_binds.map(&:last)
             @connection.send_query_prepared(pe.stmt_key, type_casted_values, 0, pe.enc_type_map)
-
-            if stream
-              @connection.set_single_row_mode
-
-              on_error = proc do |e|
-                raise translate_exception_class(e, sql)
-              end
-              @pending_result = ar_res = ActiveRecord::ConnectionAdapters::PostgreSQL::Result.new(@connection, on_error)
-
-              [ar_res, pe]
-            else
-              @connection.block
-              [@connection.get_last_result, pe]
-            end
+            yield pe
           end
+
         rescue ActiveRecord::StatementInvalid => e
-          pgerror = e.original_exception
-
-          # Get the PG code for the failure.  Annoyingly, the code for
-          # prepared statements whose return value may have changed is
-          # FEATURE_NOT_SUPPORTED.  Check here for more details:
+          # Annoyingly, the code for prepared statements whose return value may
+          # have changed is FEATURE_NOT_SUPPORTED.  Check here for more details:
           # http://git.postgresql.org/gitweb/?p=postgresql.git;a=blob;f=src/backend/utils/cache/plancache.c#l573
-          begin
-            code = pgerror.result.result_error_field(PGresult::PG_DIAG_SQLSTATE)
-          rescue
-            raise e
-          end
-          if FEATURE_NOT_SUPPORTED == code
+          if e.original_exception.is_a?(::PG::FeatureNotSupported)
             @statements.delete sql_key(sql)
             retry
           else
