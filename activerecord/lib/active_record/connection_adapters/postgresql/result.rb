@@ -46,11 +46,9 @@ module ActiveRecord
         end
 
         def finish_streaming
-          if @pgresult
-            rows
-            # Clear result queue
-            @connection.get_last_result
-          end
+          rows if @pgresult
+          # Clear result queue
+          @connection.get_last_result
         end
 
         def rows
