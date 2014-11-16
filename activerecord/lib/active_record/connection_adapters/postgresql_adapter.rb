@@ -629,10 +629,11 @@ module ActiveRecord
           type_casted_binds = binds.map do |col, val|
             [col, type_cast(val, col)]
           end
+          type_casted_values = type_casted_binds.map { |_, val| val }
+
+          @connection.send_query_prepared(pe.stmt_key, type_casted_values, 0, pe.enc_type_map)
 
           log(sql, name, type_casted_binds, pe.stmt_key) do
-            type_casted_values = type_casted_binds.map(&:last)
-            @connection.send_query_prepared(pe.stmt_key, type_casted_values, 0, pe.enc_type_map)
             @connection.block
             [@connection.get_last_result, pe]
           end
