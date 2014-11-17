@@ -83,6 +83,16 @@ module ActiveRecord
         end
       end
 
+      def instantiate_result_set_stream(result_set, column_types = {}) # :nodoc:
+        inheritance_column_index = inheritance_column && result_set.columns.find_index(inheritance_column)
+
+        result_set.stream_each_pair.lazy.map do |columns, values|
+          inheritance_value = inheritance_column_index && values[inheritance_column_index]
+          klass = discriminate_class_for_value(inheritance_value)
+          klass.instantiate_pairs(columns, values, column_types)
+        end
+      end
+
       private
         # Called by +instantiate+ to decide which class to use for a new
         # record instance.

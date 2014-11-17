@@ -9,7 +9,7 @@ module ActiveRecord
     delegate :find_each, :find_in_batches, to: :all
     delegate :select, :group, :order, :except, :reorder, :limit, :offset, :joins,
              :where, :rewhere, :preload, :eager_load, :includes, :from, :lock, :readonly,
-             :having, :create_with, :uniq, :distinct, :references, :none, :unscope, to: :all
+             :having, :create_with, :uniq, :distinct, :references, :none, :unscope, :stream, to: :all
     delegate :count, :average, :minimum, :maximum, :sum, :calculate, to: :all
     delegate :pluck, :ids, to: :all
 
@@ -35,19 +35,25 @@ module ActiveRecord
     #
     #   Post.find_by_sql ["SELECT title FROM posts WHERE author = ? AND created > ?", author_id, start_date]
     #   Post.find_by_sql ["SELECT body FROM comments WHERE author = :user_id OR approved_by = :user_id", { :user_id => user_id }]
-    def find_by_sql(sql, binds = [])
+    def find_by_sql(sql, binds = [], &block)
       result_set = connection.select_all(sanitize_sql(sql), "#{name} Load", binds)
       column_types = result_set.column_types.dup
       columns_hash.each_key { |k| column_types.delete k }
       message_bus = ActiveSupport::Notifications.instrumenter
 
       payload = {
-        record_count: result_set.length,
         class_name: name
       }
+      if block_given?
+        message_bus.instrument('instantiation.active_record', payload) do
+          instantiate_result_set_stream(result_set, column_types).each(&block)
+        end
+      else
+        payload[record_count] = result_set.length
 
-      message_bus.instrument('instantiation.active_record', payload) do
-        instantiate_result_set(result_set, column_types)
+        message_bus.instrument('instantiation.active_record', payload) do
+          instantiate_result_set(result_set, column_types)
+        end
       end
     end
 
