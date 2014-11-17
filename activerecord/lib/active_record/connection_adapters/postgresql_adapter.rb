@@ -619,8 +619,7 @@ module ActiveRecord
         end
 
         def execute_and_clear(sql, name, binds)
-          meth = without_prepared_statement?(binds) ? :send_no_cache : :send_cache
-          result = send(meth, sql, name, binds) do
+          result = send_query(sql, name, binds) do
             @connection.block
             @connection.get_last_result
           end
@@ -632,8 +631,7 @@ module ActiveRecord
         end
 
         def execute_and_stream(sql, name, binds)
-          meth = without_prepared_statement?(binds) ? :send_no_cache : :send_cache
-          send(meth, sql, name, binds) do |pool_entry|
+          send_query(sql, name, binds) do |pool_entry|
             @connection.set_single_row_mode
 
             on_error = proc do |e|
@@ -649,46 +647,47 @@ module ActiveRecord
           end
         end
 
-        def send_no_cache(sql, name, binds, stream=false)
-          finish_streaming
-          @connection.send_query(sql, [])
-          log(sql, name, binds) do
-            yield
-          end
-        end
-
-        def send_cache(sql, name, binds)
+        def send_query(sql, name, binds)
           finish_streaming
 
-          pe = prepare_statement(sql)
-
-          unless pe.enc_type_map
-            pg_encoders = binds.map do |col, val|
-              col && col.cast_type.respond_to?(:pg_encoder) ? col.cast_type.pg_encoder : nil
+          if without_prepared_statement?(binds)
+            @connection.send_query(sql, [])
+            log(sql, name, binds) do
+              yield
             end
-            pe.enc_type_map = PG::TypeMapByColumn.new(pg_encoders).with_default_type_map( @connection.type_map_for_queries )
-          end
-
-          type_casted_binds = binds.map do |col, val|
-            [col, type_cast(val, col)]
-          end
-          type_casted_values = type_casted_binds.map { |_, val| val }
-
-          @connection.send_query_prepared(pe.stmt_key, type_casted_values, 0, pe.enc_type_map)
-
-          log(sql, name, type_casted_binds, pe.stmt_key) do
-            yield pe
-          end
-
-        rescue ActiveRecord::StatementInvalid => e
-          # Annoyingly, the code for prepared statements whose return value may
-          # have changed is FEATURE_NOT_SUPPORTED.  Check here for more details:
-          # http://git.postgresql.org/gitweb/?p=postgresql.git;a=blob;f=src/backend/utils/cache/plancache.c#l573
-          if e.original_exception.is_a?(::PG::FeatureNotSupported)
-            @statements.delete sql_key(sql)
-            retry
           else
-            raise e
+            begin
+              pe = prepare_statement(sql)
+
+              unless pe.enc_type_map
+                pg_encoders = binds.map do |col, val|
+                  col && col.cast_type.respond_to?(:pg_encoder) ? col.cast_type.pg_encoder : nil
+                end
+                pe.enc_type_map = PG::TypeMapByColumn.new(pg_encoders).with_default_type_map( @connection.type_map_for_queries )
+              end
+
+              type_casted_binds = binds.map do |col, val|
+                [col, type_cast(val, col)]
+              end
+              type_casted_values = type_casted_binds.map { |_, val| val }
+
+              @connection.send_query_prepared(pe.stmt_key, type_casted_values, 0, pe.enc_type_map)
+
+              log(sql, name, type_casted_binds, pe.stmt_key) do
+                yield pe
+              end
+
+            rescue ActiveRecord::StatementInvalid => e
+              # Annoyingly, the code for prepared statements whose return value may
+              # have changed is FEATURE_NOT_SUPPORTED.  Check here for more details:
+              # http://git.postgresql.org/gitweb/?p=postgresql.git;a=blob;f=src/backend/utils/cache/plancache.c#l573
+              if e.original_exception.is_a?(::PG::FeatureNotSupported)
+                @statements.delete sql_key(sql)
+                retry
+              else
+                raise e
+              end
+            end
           end
         end
 
