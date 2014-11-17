@@ -1,6 +1,10 @@
 require 'active_record/connection_adapters/abstract_adapter'
 require 'active_record/connection_adapters/statement_pool'
 
+# Make sure we're using pg high enough for type casts
+gem 'pg', '~> 0.18.0.pre20141117110243'
+require 'pg'
+
 require 'active_record/connection_adapters/postgresql/utils'
 require 'active_record/connection_adapters/postgresql/column'
 require 'active_record/connection_adapters/postgresql/oid'
@@ -11,10 +15,6 @@ require 'active_record/connection_adapters/postgresql/schema_statements'
 require 'active_record/connection_adapters/postgresql/database_statements'
 
 require 'arel/visitors/bind_visitor'
-
-# Make sure we're using pg high enough for PGResult#values
-gem 'pg', '~> 0.15'
-require 'pg'
 
 require 'ipaddr'
 
@@ -170,6 +170,8 @@ module ActiveRecord
       end
 
       class StatementPool < ConnectionAdapters::StatementPool
+        PoolEntry = Struct.new :stmt_key, :enc_type_map, :dec_type_map, :field_names, :types
+
         def initialize(connection, max)
           super
           @counter = 0
@@ -177,31 +179,31 @@ module ActiveRecord
         end
 
         def each(&block); cache.each(&block); end
-        def key?(key);    cache.key?(key); end
-        def [](key);      cache[key]; end
+        def key?(sql_key);    cache.key?(sql_key); end
+        def [](sql_key);      cache[sql_key]; end
         def length;       cache.length; end
 
         def next_key
           "a#{@counter + 1}"
         end
 
-        def []=(sql, key)
+        def []=(sql_key, pool_entry)
           while @max <= cache.size
-            dealloc(cache.shift.last)
+            dealloc(cache.shift.last.stmt_key)
           end
           @counter += 1
-          cache[sql] = key
+          cache[sql_key] = pool_entry
         end
 
         def clear
-          cache.each_value do |stmt_key|
-            dealloc stmt_key
+          cache.each_value do |pool_entry|
+            dealloc pool_entry.stmt_key
           end
           cache.clear
         end
 
         def delete(sql_key)
-          dealloc cache[sql_key]
+          dealloc cache[sql_key].try(:stmt_key)
           cache.delete sql_key
         end
 
@@ -455,7 +457,7 @@ module ActiveRecord
           m.alias_type 'char', 'varchar'
           m.alias_type 'name', 'varchar'
           m.alias_type 'bpchar', 'varchar'
-          m.register_type 'bool', Type::Boolean.new
+          m.register_type 'bool', OID::Boolean.new
           register_class_with_limit m, 'bit', OID::Bit
           register_class_with_limit m, 'varbit', OID::BitVarying
           m.alias_type 'timestamptz', 'timestamp'
@@ -578,9 +580,9 @@ module ActiveRecord
         FEATURE_NOT_SUPPORTED = "0A000" #:nodoc:
 
         def execute_and_clear(sql, name, binds)
-          result = without_prepared_statement?(binds) ? exec_no_cache(sql, name, binds) :
-                                                        exec_cache(sql, name, binds)
-          ret = yield result
+          result, pool_entry = without_prepared_statement?(binds) ? exec_no_cache(sql, name, binds) :
+                                                                    exec_cache(sql, name, binds)
+          ret = yield(result, pool_entry)
           result.clear
           ret
         end
@@ -590,13 +592,23 @@ module ActiveRecord
         end
 
         def exec_cache(sql, name, binds)
-          stmt_key = prepare_statement(sql)
-          type_casted_binds = binds.map { |col, val|
-            [col, type_cast(val, col)]
-          }
+          pool_entry = prepare_statement(sql)
 
-          log(sql, name, type_casted_binds, stmt_key) do
-            @connection.exec_prepared(stmt_key, type_casted_binds.map { |_, val| val })
+          unless pool_entry.enc_type_map
+            pg_encoders = binds.map do |col, val|
+              col && col.cast_type.respond_to?(:pg_encoder) ? col.cast_type.pg_encoder : nil
+            end
+            pool_entry.enc_type_map = PG::TypeMapByColumn.new(pg_encoders).with_default_type_map( @connection.type_map_for_queries )
+          end
+
+          type_casted_binds = binds.map do |col, val|
+            [col, type_cast(val, col)]
+          end
+
+          log(sql, name, type_casted_binds, pool_entry.stmt_key) do
+            type_casted_values = type_casted_binds.map { |_, val| val }
+            result = @connection.exec_prepared(pool_entry.stmt_key, type_casted_values, 0, pool_entry.enc_type_map)
+            [result, pool_entry]
           end
         rescue ActiveRecord::StatementInvalid => e
           pgerror = e.original_exception
@@ -625,7 +637,7 @@ module ActiveRecord
         end
 
         # Prepare the statement if it hasn't been prepared, return
-        # the statement key.
+        # the pool entry with the statement key.
         def prepare_statement(sql)
           sql_key = sql_key(sql)
           unless @statements.key? sql_key
@@ -637,7 +649,7 @@ module ActiveRecord
             end
             # Clear the queue
             @connection.get_last_result
-            @statements[sql_key] = nextkey
+            @statements[sql_key] = StatementPool::PoolEntry.new nextkey
           end
           @statements[sql_key]
         end
