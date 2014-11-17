@@ -198,7 +198,6 @@ module ActiveRecord
             end
 
             result.type_map = type_map
-#             $stderr.puts [result, sql].inspect
             ar_res
           end
         end

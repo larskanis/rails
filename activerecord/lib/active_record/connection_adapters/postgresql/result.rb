@@ -47,7 +47,7 @@ module ActiveRecord
         end
 
         def stream_each(&block)
-          raise "unable to re-fetch already streamed rows" if @streaming
+          raise "streamed rows can be retrieved only once" if @streaming
           @streaming = true
           if @pgresult.result_status == ::PG::PGRES_SINGLE_TUPLE
             @pgresult.stream_each_row(&block)
@@ -57,7 +57,7 @@ module ActiveRecord
         def stream_each_pair(&block)
           return to_enum(__method__) unless block_given?
 
-          raise "unable to re-fetch already streamed rows" if @streaming
+          raise "streamed rows can be retrieved only once" if @streaming
           @streaming = true
           if @pgresult.result_status == ::PG::PGRES_SINGLE_TUPLE
             columns = @columns

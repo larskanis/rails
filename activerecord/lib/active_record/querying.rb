@@ -49,7 +49,7 @@ module ActiveRecord
           instantiate_result_set_stream(result_set, column_types).each(&block)
         end
       else
-        payload[record_count] = result_set.length
+        payload[:record_count] = result_set.length
 
         message_bus.instrument('instantiation.active_record', payload) do
           instantiate_result_set(result_set, column_types)

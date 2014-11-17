@@ -651,8 +651,8 @@ module ActiveRecord
 
         def send_no_cache(sql, name, binds, stream=false)
           finish_streaming
+          @connection.send_query(sql, [])
           log(sql, name, binds) do
-            @connection.send_query(sql, [])
             yield
           end
         end
