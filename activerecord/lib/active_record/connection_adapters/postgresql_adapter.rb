@@ -2,7 +2,7 @@ require 'active_record/connection_adapters/abstract_adapter'
 require 'active_record/connection_adapters/statement_pool'
 
 # Make sure we're using pg high enough for type casts
-gem 'pg', '~> 0.18'
+gem 'pg', '~> 0.18.0.pre20141117110243'
 require 'pg'
 
 require 'active_record/connection_adapters/postgresql/utils'
