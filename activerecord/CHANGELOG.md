@@ -34,6 +34,10 @@
 
     *Siddharth Sharma*
 
+*   Make use of new type cast capabilities of the pg gem for PostgreSQL.
+    This improves speed of cached queries up to 50%.
+
+    *Lars Kanis*
 
 *   Add `Table#name` to match `TableDefinition#name`.
 
