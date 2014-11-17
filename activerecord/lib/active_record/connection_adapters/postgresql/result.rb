@@ -14,6 +14,7 @@ module ActiveRecord
           @rows         = nil
           @hash_rows    = nil
           @column_types = nil
+          @streaming    = false
         end
 
         def initialize_copy(other)
@@ -45,6 +46,27 @@ module ActiveRecord
           end
         end
 
+        def stream_each(&block)
+          raise "streamed rows can be retrieved only once" if @streaming
+          @streaming = true
+          if @pgresult.result_status == ::PG::PGRES_SINGLE_TUPLE
+            @pgresult.stream_each_row(&block)
+          end
+        end
+
+        def stream_each_pair(&block)
+          return to_enum(__method__) unless block_given?
+
+          raise "streamed rows can be retrieved only once" if @streaming
+          @streaming = true
+          if @pgresult.result_status == ::PG::PGRES_SINGLE_TUPLE
+            columns = @columns
+            @pgresult.stream_each_row do |row|
+              yield columns, row
+            end
+          end
+        end
+
         def finish_streaming
           rows if @pgresult
           # Clear result queue
@@ -66,28 +88,28 @@ module ActiveRecord
         private
 
         def hash_rows
-          @hash_rows ||= begin
-            # The field_name strings are frozen when retrieved from the PG::Result object.
-            # This prevents them getting duped when used as keys in ActiveRecord::Base's @attributes hash
-            columns = @columns
-            length = columns.length
+          @hash_rows ||= rows.map { |row| row_to_hash_row( row ) }
+        end
 
-            rows.map do |row|
-              # In the past we used Hash[columns.zip(row)]
-              #  though elegant, the verbose way is much more efficient
-              #  both time and memory wise cause it avoids a big array allocation
-              #  this method is called a lot and needs to be micro optimised
-              hash = {}
+        def row_to_hash_row(row)
+          # In the past we used Hash[columns.zip(row)]
+          #  though elegant, the verbose way is much more efficient
+          #  both time and memory wise cause it avoids a big array allocation
+          #  this method is called a lot and needs to be micro optimised
+          hash = {}
 
-              index = 0
+          index = 0
 
-              while index < length
-                hash[columns[index]] = row[index]
-                index += 1
-              end
-              hash
-            end
+          # The field_name strings are frozen when retrieved from the PG::Result object.
+          # This prevents them getting duped when used as keys in ActiveRecord::Base's @attributes hash
+          columns = @columns
+          length = columns.length
+
+          while index < length
+            hash[columns[index]] = row[index]
+            index += 1
           end
+          hash
         end
       end
     end

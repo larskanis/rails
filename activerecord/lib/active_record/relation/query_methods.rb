@@ -8,6 +8,15 @@ module ActiveRecord
 
     include ActiveModel::ForbiddenAttributesProtection
 
+    def stream(value = true)
+      spawn.stream!(value)
+    end
+
+    def stream!(value = true) # :nodoc:
+      self.stream_value = value
+      self
+    end
+
     # WhereChain objects act as placeholder for queries in which #where does not have any parameter.
     # In this case, #where must be chained with #not to return a new relation.
     class WhereChain

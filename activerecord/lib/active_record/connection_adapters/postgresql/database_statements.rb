@@ -169,10 +169,12 @@ module ActiveRecord
               type_map = pe.dec_type_map
               ar_res.columns = pe.field_names
               ar_res.column_types = pe.types
+              @connection.block
               ar_res.pgresult = result = @connection.get_result.check
             else
               types = {}
               pg_types = []
+              @connection.block
               ar_res.pgresult = result = @connection.get_result.check
               field_names = result.fields
               field_names.each_with_index do |fname, i|
@@ -196,7 +198,6 @@ module ActiveRecord
             end
 
             result.type_map = type_map
-#             $stderr.puts [result, sql].inspect
             ar_res
           end
         end
