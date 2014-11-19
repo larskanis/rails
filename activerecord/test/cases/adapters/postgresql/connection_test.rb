@@ -127,6 +127,9 @@ module ActiveRecord
 
     def test_statement_key_is_logged
       bindval = 1
+      # A prepared statement is created after two uses.
+      @connection.exec_query('SELECT $1::integer', 'SQL', [[nil, bindval]])
+      @connection.exec_query('SELECT $1::integer', 'SQL', [[nil, bindval]])
       @connection.exec_query('SELECT $1::integer', 'SQL', [[nil, bindval]])
       name = @subscriber.payloads.last[:statement_name]
       assert name

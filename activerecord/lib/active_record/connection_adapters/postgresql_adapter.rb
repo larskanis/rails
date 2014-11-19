@@ -169,58 +169,132 @@ module ActiveRecord
         { concurrently: 'CONCURRENTLY' }
       end
 
-      class StatementPool < ConnectionAdapters::StatementPool
-        PoolEntry = Struct.new :stmt_key, :enc_type_map, :dec_type_map, :field_names, :types
-
-        def initialize(connection, max)
-          super
-          @counter = 0
-          @cache   = Hash.new { |h,pid| h[pid] = {} }
+      class StatementPool
+        def initialize(max)
+          @max = max
+          @cache = Hash.new { |h,pid| h[pid] = {} }
         end
 
         def each(&block); cache.each(&block); end
         def key?(sql_key);    cache.key?(sql_key); end
-        def [](sql_key);      cache[sql_key]; end
         def length;       cache.length; end
 
-        def next_key
-          "a#{@counter + 1}"
+        def [](sql_key)
+          # Ensure a LRU cache behaviour
+          entry = cache.delete(sql_key)
+          cache[sql_key] = entry if entry
+          entry
         end
 
         def []=(sql_key, pool_entry)
           while @max <= cache.size
-            dealloc(cache.shift.last.stmt_key)
+            cache.shift
           end
-          @counter += 1
           cache[sql_key] = pool_entry
         end
 
         def clear
-          cache.each_value do |pool_entry|
-            dealloc pool_entry.stmt_key
-          end
           cache.clear
+          self
         end
 
         def delete(sql_key)
-          dealloc cache[sql_key].try(:stmt_key)
           cache.delete sql_key
         end
 
-        private
+        protected
 
           def cache
             @cache[Process.pid]
           end
 
-          def dealloc(key)
-            @connection.query "DEALLOCATE #{key}" if connection_active?
+      end
+
+      class PreparedStatementPool < StatementPool
+        PoolEntry = Struct.new :stmt_key, :enc_type_map, :dec_type_map, :field_names, :types
+
+        def initialize(connection, max)
+          super(max)
+          @connection = connection
+          @counter = 0
+          @pending_query_sql = nil
+          @pending_query_proc = nil
+        end
+
+        # requires a subsequent call to execute_pending_query to process the database query
+        def delete_oversized
+          if @max <= cache.size
+            # remove 5% least recently used statements in a single query
+            keys = (@max * 95 / 100 .. cache.size).map do
+              cache.shift.last.stmt_key
+            end
+            dealloc(keys)
+          end
+        end
+
+        # requires a subsequent call to execute_pending_query to process the database query
+        def add(sql_key, sql, *args)
+          @counter += 1
+          stmt_key = "a#{@counter}"
+          pool_entry = PreparedStatementPool::PoolEntry.new(stmt_key, *args)
+          set_pending(sql){ @connection.send_prepare(stmt_key, sql) }
+          cache[sql_key] = pool_entry
+        end
+
+        # requires a subsequent call to execute_pending_query to process the database query
+        def clear
+          dealloc(cache.each_value.map(&:stmt_key))
+          super
+        end
+
+        alias delete_without_dealloc delete
+
+        # requires a subsequent call to execute_pending_query to process the database query
+        def delete(sql_key)
+          dealloc([cache[sql_key].stmt_key])
+          super
+        end
+
+        def send_pending_query
+          if @pending_query_proc
+            @pending_query_proc.call
+            @pending_query_proc = nil
+            true
+          else
+            false
+          end
+        end
+
+        def finish_pending_query
+          return unless @pending_query_sql
+          @pending_query_sql = nil
+          @connection.get_last_result
+        rescue PG::Error => err
+          yield err, @pending_query_sql
+        end
+
+        def execute_pending_query
+          send_pending_query
+          finish_pending_query
+        end
+
+        def discard_pending_query
+          @pending_query_sql = nil
+          @pending_query_proc = nil
+        end
+
+        private
+
+          def dealloc(stmt_keys)
+            return if stmt_keys.empty?
+            sql = stmt_keys.map { |key| "DEALLOCATE #{key};" }.join
+            set_pending(sql){ @connection.send_query(sql) }
           end
 
-          def connection_active?
-            @connection.status == PGconn::CONNECTION_OK
-          rescue PGError
-            false
+          def set_pending(sql, &block)
+            raise ArgumentError, "another pending query is already running: #{@pending_query_sql}" if @pending_query_proc
+            @pending_query_sql = sql
+            @pending_query_proc = block
           end
       end
 
@@ -240,10 +314,14 @@ module ActiveRecord
         # @local_tz is initialized as nil to avoid warnings when connect tries to use it
         @local_tz = nil
         @table_alias_length = nil
+        # Use a dummy pool to succeed the call to finish_pending_query while calling connect
+        @prepared_statements_pool = Struct.new(:finish_pending_query).new
 
         connect
-        @statements = StatementPool.new @connection,
-                                        self.class.type_cast_config_to_integer(config.fetch(:statement_limit) { 1000 })
+
+        statement_limit = self.class.type_cast_config_to_integer(config.fetch(:statement_limit) { 1000 })
+        @counted_statements_pool = StatementPool.new(statement_limit)
+        @prepared_statements_pool = PreparedStatementPool.new(@connection, statement_limit)
 
         if postgresql_version < 80200
           raise "Your version of PostgreSQL (#{postgresql_version}) is too old, please upgrade!"
@@ -282,7 +360,15 @@ module ActiveRecord
 
       # Clears the prepared statements cache.
       def clear_cache!
-        @statements.clear
+        finish_pending_query
+        @counted_statements_pool.clear
+        @prepared_statements_pool.clear
+        @prepared_statements_pool.execute_pending_query rescue PG::Error
+      end
+
+      def raw_connection
+        finish_pending_query
+        super
       end
 
       def truncate(table_name, name = nil)
@@ -291,14 +377,16 @@ module ActiveRecord
 
       # Is this connection alive and ready for queries?
       def active?
+        finish_pending_query
         @connection.query 'SELECT 1'
         true
-      rescue PGError
+      rescue PGError, ActiveRecord::StatementInvalid
         false
       end
 
       # Close then reopen the connection.
       def reconnect!
+        finish_pending_query
         super
         @connection.reset
         configure_connection
@@ -317,6 +405,7 @@ module ActiveRecord
       # Disconnects from the database if already connected. Otherwise, this
       # method does nothing.
       def disconnect!
+        finish_pending_query
         super
         @connection.close rescue nil
       end
@@ -604,31 +693,81 @@ module ActiveRecord
 
         FEATURE_NOT_SUPPORTED = "0A000" #:nodoc:
 
-        def execute_and_clear(sql, name, binds)
-          result, pool_entry = without_prepared_statement?(binds) ? exec_no_cache(sql, name, binds) :
-                                                                    exec_cache(sql, name, binds)
-          ret = yield(result, pool_entry)
-          result.clear
-          ret
-        end
-
-        def exec_no_cache(sql, name, binds)
-          @connection.send_query(sql, [])
-
-          log(sql, name, binds) do
-            @connection.block
-            @connection.get_last_result
+        def finish_pending_query
+          @prepared_statements_pool.finish_pending_query do |err, sql|
+            raise translate_exception_class(err, sql)
           end
         end
 
-        def exec_cache(sql, name, binds)
-          pe = prepare_statement(sql)
+        def execute_and_clear(sql, name, binds)
+          sql_key = sql_key(sql)
+          pgresult, pool_entry = if pool_entry = @prepared_statements_pool[sql_key]
+            exec_prepared(sql, name, binds, pool_entry)
+          elsif count = @counted_statements_pool[sql_key]
+            count += 1
+            @counted_statements_pool[sql_key] = count
+            # Create a prepared statement if the query is used twice
+            prepare = @prepared_statements && count >= 2 && sql_key
+            exec_counted(sql, name, binds, prepare)
+          else
+            @counted_statements_pool[sql_key] = 1
+            exec_counted(sql, name, binds, false)
+          end
 
-          unless pe.enc_type_map
+          ret = yield(pgresult, pool_entry)
+          pgresult.clear
+          ret
+        end
+
+        def exec_counted(sql, name, binds, sql_key)
+          if without_prepared_statement?(binds)
+            finish_pending_query
+            @connection.send_query(sql, [])
+            type_casted_binds = binds
+          else
             pg_encoders = binds.map do |col, val|
               col && col.cast_type.respond_to?(:pg_encoder) ? col.cast_type.pg_encoder : nil
             end
-            pe.enc_type_map = PG::TypeMapByColumn.new(pg_encoders).with_default_type_map( @connection.type_map_for_queries )
+            enc_type_map = PG::TypeMapByColumn.new(pg_encoders).with_default_type_map( @connection.type_map_for_queries )
+
+            type_casted_binds = binds.map do |col, val|
+              [col, type_cast(val, col)]
+            end
+            type_casted_values = type_casted_binds.map { |_, val| val }
+
+            finish_pending_query
+            @connection.send_query(sql, type_casted_values, 0, enc_type_map)
+          end
+
+          if sql_key
+            @counted_statements_pool.delete(sql_key)
+            pool_entry = @prepared_statements_pool.add(sql_key, sql, enc_type_map)
+          else
+            @prepared_statements_pool.delete_oversized
+          end
+
+          pgresult = log(sql, name, type_casted_binds) do
+            # do an extra call to PG::Connection#block, because although
+            # get_last_result is GVL friendly, it doesn't stop on Ctrl-C
+            @connection.block
+            @connection.get_last_result
+          end
+
+          @prepared_statements_pool.send_pending_query
+
+          [pgresult, pool_entry]
+        rescue ActiveRecord::StatementInvalid => e
+          @prepared_statements_pool.discard_pending_query
+          @prepared_statements_pool.delete_without_dealloc(sql_key) if sql_key
+          raise e
+        end
+
+        def exec_prepared(sql, name, binds, pool_entry)
+          unless pool_entry.enc_type_map
+            pg_encoders = binds.map do |col, val|
+              col && col.cast_type.respond_to?(:pg_encoder) ? col.cast_type.pg_encoder : nil
+            end
+            pool_entry.enc_type_map = PG::TypeMapByColumn.new(pg_encoders).with_default_type_map( @connection.type_map_for_queries )
           end
 
           type_casted_binds = binds.map do |col, val|
@@ -636,28 +775,23 @@ module ActiveRecord
           end
           type_casted_values = type_casted_binds.map { |_, val| val }
 
-          @connection.send_query_prepared(pe.stmt_key, type_casted_values, 0, pe.enc_type_map)
+          finish_pending_query
+          @connection.send_query_prepared(pool_entry.stmt_key, type_casted_values, 0, pool_entry.enc_type_map)
 
-          log(sql, name, type_casted_binds, pe.stmt_key) do
+          pgresult = log(sql, name, type_casted_binds, pool_entry.stmt_key) do
             # do an extra call to PG::Connection#block, because although
             # get_last_result is GVL friendly, it doesn't stop on Ctrl-C
             @connection.block
-            [@connection.get_last_result, pe]
+            @connection.get_last_result
           end
-        rescue ActiveRecord::StatementInvalid => e
-          pgerror = e.original_exception
 
-          # Get the PG code for the failure.  Annoyingly, the code for
-          # prepared statements whose return value may have changed is
-          # FEATURE_NOT_SUPPORTED.  Check here for more details:
+          [pgresult, pool_entry]
+        rescue ActiveRecord::StatementInvalid => e
+          # Annoyingly, the code for prepared statements whose return value may
+          # have changed is FEATURE_NOT_SUPPORTED.  Check here for more details:
           # http://git.postgresql.org/gitweb/?p=postgresql.git;a=blob;f=src/backend/utils/cache/plancache.c#l573
-          begin
-            code = pgerror.result.result_error_field(PGresult::PG_DIAG_SQLSTATE)
-          rescue
-            raise e
-          end
-          if FEATURE_NOT_SUPPORTED == code
-            @statements.delete sql_key(sql)
+          if e.original_exception.is_a?(::PG::FeatureNotSupported)
+            @prepared_statements_pool.delete(sql_key(sql))
             retry
           else
             raise e
@@ -668,24 +802,6 @@ module ActiveRecord
         # of statements
         def sql_key(sql)
           "#{schema_search_path}-#{sql}"
-        end
-
-        # Prepare the statement if it hasn't been prepared, return
-        # the pool entry with the statement key.
-        def prepare_statement(sql)
-          sql_key = sql_key(sql)
-          unless @statements.key? sql_key
-            nextkey = @statements.next_key
-            begin
-              @connection.prepare nextkey, sql
-            rescue => e
-              raise translate_exception_class(e, sql)
-            end
-            # Clear the queue
-            @connection.get_last_result
-            @statements[sql_key] = StatementPool::PoolEntry.new nextkey
-          end
-          @statements[sql_key]
         end
 
         # Connects to a PostgreSQL server and sets up the adapter depending on the

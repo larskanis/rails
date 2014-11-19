@@ -143,6 +143,7 @@ module ActiveRecord
 
         # Queries the database and returns the results in an Array-like object
         def query(sql, name = nil) #:nodoc:
+          finish_pending_query
           log(sql, name) do
             result_as_array @connection.async_exec(sql)
           end
@@ -151,19 +152,20 @@ module ActiveRecord
         # Executes an SQL statement, returning a PGresult object on success
         # or raising a PGError exception otherwise.
         def execute(sql, name = nil)
+          finish_pending_query
           log(sql, name) do
             @connection.async_exec(sql)
           end
         end
 
         def exec_query(sql, name = 'SQL', binds = [])
-          execute_and_clear(sql, name, binds) do |result, pe|
+          execute_and_clear(sql, name, binds) do |result, pool_entry|
 
-            if pe && pe.dec_type_map
+            if pool_entry && pool_entry.dec_type_map
               # Use values from statement cache
-              type_map = pe.dec_type_map
-              types = pe.types
-              field_names = pe.field_names
+              type_map = pool_entry.dec_type_map
+              types = pool_entry.types
+              field_names = pool_entry.field_names
             else
               types = {}
               pg_types = []
@@ -178,11 +180,11 @@ module ActiveRecord
               end
               type_map = PG::TypeMapByColumn.new pg_types
 
-              if pe
+              if pool_entry
                 # store values in statement cache
-                pe.dec_type_map = type_map
-                pe.types = types
-                pe.field_names = field_names
+                pool_entry.dec_type_map = type_map
+                pool_entry.types = types
+                pool_entry.field_names = field_names
               end
             end
 
