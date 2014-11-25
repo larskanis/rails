@@ -50,21 +50,9 @@ Don't forget to review the difference, to see if there were any unexpected chang
 Upgrading from Rails 4.1 to Rails 4.2
 -------------------------------------
 
-NOTE: This section is a work in progress, please help to improve this by sending
-a [pull request](https://github.com/rails/rails/edit/master/guides/source/upgrading_ruby_on_rails.md).
-
 ### Web Console
 
-First, add `gem 'web-console', '~> 2.0'` to the `:development` group in your Gemfile and run `bundle install` (it won't have been included when you upgraded Rails). Once it's been installed, you can simply drop a reference to the console helper (i.e., `<%= console %>`) into any view you want to enable it for. A console will also be provided on any error page you view in your development environment.
-
-Additionally, you can tell Rails to automatically mount a VT100-compatible console on a predetermined path by setting the appropriate configuration flags in your development config:
-
-```ruby
-# config/environments/development.rb
-
-config.web_console.automount = true
-config.web_console.default_mount_path = '/terminal' # Optional, defaults to /console
-```
+First, add `gem 'web-console', '~> 2.0.0.beta4'` to the `:development` group in your Gemfile and run `bundle install` (it won't have been included when you upgraded Rails). Once it's been installed, you can simply drop a reference to the console helper (i.e., `<%= console %>`) into any view you want to enable it for. A console will also be provided on any error page you view in your development environment.
 
 ### Responders
 
@@ -144,6 +132,18 @@ When using a custom coder (e.g. `serialize :metadata, JSON`),
 assigning `nil` to a serialized attribute will save it to the database
 as `NULL` instead of passing the `nil` value through the coder (e.g. `"null"`
 when using the `JSON` coder).
+
+### Production log level
+
+In Rails 5, the default log level for the production environment will be changed
+to `:debug` (from `:info`). To preserve the current default, add the following
+line to your `production.rb`:
+
+```ruby
+# Set to `:info` to match the current default, or set to `:debug` to opt-into
+# the future default.
+config.log_level = :info
+```
 
 ### `after_bundle` in Rails templates
 

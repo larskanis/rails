@@ -1,6 +1,38 @@
+*   Bring back `db:test:prepare` to synchronize the test database schema.
+
+    Manual synchronization using `bin/rake db:test:prepare` is required
+    when a migration is rolled-back, edited and reapplied.
+
+    `ActiveRecord::Base.maintain_test_schema` now uses `db:test:prepare`
+    to synchronize the schema. Plugins can use this task as a hook to
+    provide custom behavior after the schema has been loaded.
+
+    NOTE: `test:prepare` runs before the schema was synchronized.
+
+    Fixes #17171, #15787.
+
+    *Yves Senn*
+
+*   Change `reflections` public api to return the keys as String objects.
+
+    Fixes #16928.
+
+    *arthurnn*
+
+*   Renaming a table in pg also renames the primary key index.
+
+    Fixes #12856
+
+    *Sean Griffin*
+
 *   Make it possible to access fixtures excluded by a `default_scope`.
 
     *Yves Senn*
+
+*   Fix includes on association with a scope containing joins along with conditions
+    on the joined assoiciation.
+
+    *Siddharth Sharma*
 
 *   Make use of new type cast capabilities of the pg gem for PostgreSQL.
     This improves speed of cached queries up to 50%.

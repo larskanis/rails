@@ -13,6 +13,16 @@ module ActiveRecord
             @pg_encoder = PG::TextEncoder::Float.new name: type
             @pg_decoder = PG::TextDecoder::Float.new name: type
           end
+
+          def type_cast_from_user(value)
+            case value
+            when ::Float then     value
+            when 'Infinity' then  ::Float::INFINITY
+            when '-Infinity' then -::Float::INFINITY
+            when 'NaN' then       ::Float::NAN
+            else                  value.to_f
+            end
+          end
         end
       end
     end

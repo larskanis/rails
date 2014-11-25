@@ -411,7 +411,10 @@ module ActiveRecord
           pk, seq = pk_and_sequence_for(new_name)
           if seq && seq.identifier == "#{table_name}_#{pk}_seq"
             new_seq = "#{new_name}_#{pk}_seq"
+            idx = "#{table_name}_pkey"
+            new_idx = "#{new_name}_pkey"
             execute "ALTER TABLE #{quote_table_name(seq)} RENAME TO #{quote_table_name(new_seq)}"
+            execute "ALTER INDEX #{quote_table_name(idx)} RENAME TO #{quote_table_name(new_idx)}"
           end
 
           rename_table_indexes(table_name, new_name)
@@ -430,7 +433,12 @@ module ActiveRecord
           quoted_table_name = quote_table_name(table_name)
           sql_type = type_to_sql(type, options[:limit], options[:precision], options[:scale])
           sql_type << "[]" if options[:array]
-          execute "ALTER TABLE #{quoted_table_name} ALTER COLUMN #{quote_column_name(column_name)} TYPE #{sql_type}"
+          sql = "ALTER TABLE #{quoted_table_name} ALTER COLUMN #{quote_column_name(column_name)} TYPE #{sql_type}"
+          sql << " USING #{options[:using]}" if options[:using]
+          if options[:cast_as]
+            sql << " USING CAST(#{quote_column_name(column_name)} AS #{type_to_sql(options[:cast_as], options[:limit], options[:precision], options[:scale])})"
+          end
+          execute sql
 
           change_column_default(table_name, column_name, options[:default]) if options_include_default?(options)
           change_column_null(table_name, column_name, options[:null], options[:default]) if options.key?(:null)
