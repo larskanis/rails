@@ -47,7 +47,7 @@ module ActiveRecord
         def select_value(arel, name = nil, binds = [])
           arel, binds = binds_from_relation arel, binds
           sql = to_sql(arel, binds)
-          execute_and_clear(sql, name, binds) do |result, |
+          execute_and_clear(sql, name, binds) do |result, _|
             result.getvalue(0, 0) if result.ntuples > 0 && result.nfields > 0
           end
         end
@@ -55,7 +55,7 @@ module ActiveRecord
         def select_values(arel, name = nil)
           arel, binds = binds_from_relation arel, []
           sql = to_sql(arel, binds)
-          execute_and_clear(sql, name, binds) do |result, |
+          execute_and_clear(sql, name, binds) do |result, _|
             if result.nfields > 0
               result.column_values(0)
             else
@@ -67,7 +67,7 @@ module ActiveRecord
         # Executes a SELECT query and returns an array of rows. Each row is an
         # array of field values.
         def select_rows(sql, name = nil, binds = [])
-          execute_and_clear(sql, name, binds) do |result, |
+          execute_and_clear(sql, name, binds) do |result, _|
             result.values
           end
         end
@@ -194,7 +194,7 @@ module ActiveRecord
         end
 
         def exec_delete(sql, name = 'SQL', binds = [])
-          execute_and_clear(sql, name, binds) {|result, | result.cmd_tuples }
+          execute_and_clear(sql, name, binds) {|result, _| result.cmd_tuples }
         end
         alias :exec_update :exec_delete
 

@@ -25,6 +25,7 @@ module ActiveRecord
         if column.binary?
           value = value ? "<#{value.bytesize} bytes of binary data>" : "<NULL binary data>"
         end
+
         [column.name, value]
       else
         [nil, value]
