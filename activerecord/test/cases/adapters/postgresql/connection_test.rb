@@ -127,7 +127,10 @@ module ActiveRecord
 
     def test_statement_key_is_logged
       bindval = 1
-      @connection.exec_query('SELECT $1::integer', 'SQL', [[nil, bindval]])
+      # A prepared statement is created after two uses.
+      3.times do
+        @connection.exec_query('SELECT $1::integer', 'SQL', [[nil, bindval]])
+      end
       name = @subscriber.payloads.last[:statement_name]
       assert name
       res = @connection.exec_query("EXPLAIN (FORMAT JSON) EXECUTE #{name}(#{bindval})")
