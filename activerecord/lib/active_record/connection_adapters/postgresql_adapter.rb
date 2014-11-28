@@ -169,14 +169,45 @@ module ActiveRecord
         { concurrently: 'CONCURRENTLY' }
       end
 
-      class StatementPool
+      # SQL statements counter pool
+      #
+      # We don't care about collisions in this simple hash implementation, because
+      # they have a performance impact only.
+      class CountedStatementPool
         def initialize(max)
           @max = max
-          @cache = Hash.new { |h,pid| h[pid] = {} }
+          clear
         end
 
-        def each(&block); cache.each(&block); end
-        def key?(sql_key);    cache.key?(sql_key); end
+        def [](sql_key)
+          @cache[sql_key.hash % @max]
+        end
+
+        def []=(sql_key, count)
+          @cache[sql_key.hash % @max] = count
+        end
+
+        def delete(sql_key)
+          @cache[sql_key.hash % @max] = nil
+        end
+
+        def clear
+          @cache = Array.new(@max)
+        end
+      end
+
+      class PreparedStatementPool
+        PoolEntry = Struct.new :stmt_key, :enc_type_map, :dec_type_map, :field_names, :types
+
+        def initialize(connection, max)
+          @connection = connection
+          @max = max
+          @cache = Hash.new { |h,pid| h[pid] = {} }
+          @counter = 0
+          @pending_query_sql = nil
+          @pending_query_proc = nil
+        end
+
         def length;       cache.length; end
 
         def [](sql_key)
@@ -184,52 +215,6 @@ module ActiveRecord
           entry = cache.delete(sql_key)
           cache[sql_key] = entry if entry
           entry
-        end
-
-        def []=(sql_key, pool_entry)
-          while @max <= cache.size
-            cache.shift
-          end
-          cache[sql_key] = pool_entry
-        end
-
-        def clear
-          cache.clear
-          self
-        end
-
-        def delete(sql_key)
-          cache.delete sql_key
-        end
-
-        protected
-
-          def cache
-            @cache[Process.pid]
-          end
-
-      end
-
-      class PreparedStatementPool < StatementPool
-        PoolEntry = Struct.new :stmt_key, :enc_type_map, :dec_type_map, :field_names, :types
-
-        def initialize(connection, max)
-          super(max)
-          @connection = connection
-          @counter = 0
-          @pending_query_sql = nil
-          @pending_query_proc = nil
-        end
-
-        # requires a subsequent call to execute_pending_query to process the database query
-        def delete_oversized
-          if @max <= cache.size
-            # remove 5% least recently used statements in a single query
-            keys = (@max * 95 / 100 .. cache.size).map do
-              cache.shift.last.stmt_key
-            end
-            dealloc(keys)
-          end
         end
 
         # requires a subsequent call to execute_pending_query to process the database query
@@ -244,15 +229,28 @@ module ActiveRecord
         # requires a subsequent call to execute_pending_query to process the database query
         def clear
           dealloc(cache.each_value.map(&:stmt_key))
-          super
+          cache.clear
         end
 
-        alias delete_without_dealloc delete
+        def delete_without_dealloc(sql_key)
+          cache.delete sql_key
+        end
 
         # requires a subsequent call to execute_pending_query to process the database query
         def delete(sql_key)
           dealloc([cache[sql_key].stmt_key])
-          super
+          delete_without_dealloc(sql_key)
+        end
+
+        # requires a subsequent call to execute_pending_query to process the database query
+        def delete_oversized
+          if @max <= cache.size
+            # remove 5% least recently used statements in a single query
+            keys = (@max * 95 / 100 .. cache.size).map do
+              cache.shift.last.stmt_key
+            end
+            dealloc(keys)
+          end
         end
 
         def send_pending_query
@@ -284,6 +282,10 @@ module ActiveRecord
         end
 
         private
+
+          def cache
+            @cache[Process.pid]
+          end
 
           def dealloc(stmt_keys)
             return if stmt_keys.empty?
@@ -320,7 +322,7 @@ module ActiveRecord
         connect
 
         statement_limit = self.class.type_cast_config_to_integer(config.fetch(:statement_limit) { 1000 })
-        @counted_statements_pool = StatementPool.new(statement_limit)
+        @counted_statements_pool = CountedStatementPool.new(statement_limit)
         @prepared_statements_pool = PreparedStatementPool.new(@connection, statement_limit)
 
         if postgresql_version < 80200
