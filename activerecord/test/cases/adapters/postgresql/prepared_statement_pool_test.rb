@@ -4,29 +4,10 @@ require 'minitest/mock'
 module ActiveRecord
   module ConnectionAdapters
     class PostgreSQLAdapter < AbstractAdapter
-      class InactivePGconn
-        def query(*args)
-          raise PGError
-        end
-
-        def status
-          PGconn::CONNECTION_BAD
-        end
-
-        def prepare(*args)
-        end
-      end
-
       class PreparedStatementPoolTest < ActiveRecord::TestCase
-        def test_dealloc_does_not_raise_on_inactive_connection
-          cache = PreparedStatementPool.new InactivePGconn.new, 10
-          cache.add('foo', 'bar')
-          assert_nothing_raised { cache.clear }
-        end
-
         if Process.respond_to?(:fork)
           def test_cache_is_per_pid
-            cache = PreparedStatementPool.new InactivePGconn.new, 10
+            cache = PreparedStatementPool.new nil, 10
             cache.add('foo', 'bar')
             assert_equal PreparedStatementPool::PoolEntry.new('a1'), cache['foo']
 
@@ -43,10 +24,13 @@ module ActiveRecord
         def test_send_prepare_statements
           conn = Minitest::Mock.new
           cache = PreparedStatementPool.new conn, 10
-
-          conn.expect :prepare, nil, ["a1", "SQL"]
           cache.add("stmt", "SQL")
 
+          conn.expect :send_prepare, nil, ['a1', 'SQL']
+          cache.send_pending_query
+
+          conn.expect :get_last_result, nil
+          cache.finish_pending_query
           conn.verify
         end
 
@@ -54,8 +38,8 @@ module ActiveRecord
           cache = PreparedStatementPool.new conn, 10
 
           count.times do |idx|
-            conn.expect :prepare, nil, ["a#{idx+1}", "SQL #{idx}"]
             cache.add("stmt #{idx}", "SQL #{idx}")
+            cache.discard_pending_query
           end
 
           yield cache
@@ -66,9 +50,9 @@ module ActiveRecord
           with_filled_cache(conn, 10) do |cache|
             cache['stmt 1']
 
-            conn.expect :status, PGconn::CONNECTION_OK
-            conn.expect :exec, nil, ['DEALLOCATE a1;DEALLOCATE a3;']
             cache.delete_oversized
+            conn.expect :send_query, nil, ['DEALLOCATE a1;DEALLOCATE a3;']
+            cache.send_pending_query
           end
           conn.verify
         end
@@ -80,17 +64,27 @@ module ActiveRecord
             cache.delete_oversized
             assert_equal 9, cache.length, "pool limit should not be reached"
 
-            conn.expect :prepare, nil, ["a10", "SQL 10"]
             cache.add("stmt 10", "SQL 10")
+            cache.discard_pending_query
             assert_equal 10, cache.length
 
-            conn.expect :status, PGconn::CONNECTION_OK
-            conn.expect :exec, nil, ['DEALLOCATE a1;DEALLOCATE a2;']
             cache.delete_oversized
             assert_operator 8, :<=, cache.length
+
+            conn.expect :send_query, nil, ['DEALLOCATE a1;DEALLOCATE a2;']
+            conn.expect :get_last_result, nil
+            cache.execute_pending_query
           end
 
           conn.verify
+        end
+
+        def test_error_on_two_statements
+          cache = PreparedStatementPool.new nil, 10
+          cache.add("stmt 1", "SQL 1")
+          assert_raises(ArgumentError) do
+            cache.add("stmt 2", "SQL 2")
+          end
         end
       end
     end

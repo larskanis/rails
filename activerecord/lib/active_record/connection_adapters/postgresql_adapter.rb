@@ -210,6 +210,8 @@ module ActiveRecord
           @max = max
           @cache = Hash.new { |h,pid| h[pid] = {} }
           @counter = 0
+          @pending_query_sql = nil
+          @pending_query_proc = nil
         end
 
         def length;       cache.length; end
@@ -221,14 +223,16 @@ module ActiveRecord
           entry
         end
 
+        # requires a subsequent call to execute_pending_query to process the database query
         def add(sql_key, sql, *args)
           @counter += 1
           stmt_key = "a#{@counter}"
           pool_entry = PreparedStatementPool::PoolEntry.new(stmt_key, *args)
-          @connection.prepare(stmt_key, sql)
+          set_pending(sql){ @connection.send_prepare(stmt_key, sql) }
           cache[sql_key] = pool_entry
         end
 
+        # requires a subsequent call to execute_pending_query to process the database query
         def clear
           dealloc(cache.each_value.map(&:stmt_key))
           cache.clear
@@ -238,11 +242,13 @@ module ActiveRecord
           cache.delete sql_key
         end
 
+        # requires a subsequent call to execute_pending_query to process the database query
         def delete(sql_key)
           dealloc([cache[sql_key].stmt_key])
           delete_without_dealloc(sql_key)
         end
 
+        # requires a subsequent call to execute_pending_query to process the database query
         def delete_oversized
           if @max <= cache.size
             # remove 5% least recently used statements in a single query
@@ -251,6 +257,34 @@ module ActiveRecord
             end
             dealloc(keys)
           end
+        end
+
+        def send_pending_query
+          if @pending_query_proc
+            @pending_query_proc.call
+            @pending_query_proc = nil
+            true
+          else
+            false
+          end
+        end
+
+        def finish_pending_query
+          return unless @pending_query_sql
+          @pending_query_sql = nil
+          @connection.get_last_result
+        rescue PG::Error => err
+          yield err, @pending_query_sql
+        end
+
+        def execute_pending_query
+          send_pending_query
+          finish_pending_query
+        end
+
+        def discard_pending_query
+          @pending_query_sql = nil
+          @pending_query_proc = nil
         end
 
         private
@@ -262,13 +296,13 @@ module ActiveRecord
           def dealloc(stmt_keys)
             return if stmt_keys.empty?
             sql = stmt_keys.map { |key| "DEALLOCATE #{key};" }.join
-            @connection.exec(sql) if connection_active?
+            set_pending(sql){ @connection.send_query(sql) }
           end
 
-          def connection_active?
-            @connection.status == PGconn::CONNECTION_OK
-          rescue PGError
-            false
+          def set_pending(sql, &block)
+            raise ArgumentError, "another pending query is already running: #{@pending_query_sql}" if @pending_query_proc
+            @pending_query_sql = sql
+            @pending_query_proc = block
           end
       end
 
@@ -288,6 +322,8 @@ module ActiveRecord
         # @local_tz is initialized as nil to avoid warnings when connect tries to use it
         @local_tz = nil
         @table_alias_length = nil
+        # Use a dummy pool to succeed the call to finish_pending_query while calling connect
+        @prepared_statements_pool = Struct.new(:finish_pending_query).new
 
         connect
 
@@ -330,8 +366,15 @@ module ActiveRecord
 
       # Clears the prepared statements cache.
       def clear_cache!
+        finish_pending_query
         @counted_statements_pool.clear
         @prepared_statements_pool.clear
+        @prepared_statements_pool.execute_pending_query rescue PG::Error
+      end
+
+      def raw_connection
+        finish_pending_query
+        super
       end
 
       def truncate(table_name, name = nil)
@@ -340,14 +383,16 @@ module ActiveRecord
 
       # Is this connection alive and ready for queries?
       def active?
+        finish_pending_query
         @connection.query 'SELECT 1'
         true
-      rescue PGError
+      rescue PGError, ActiveRecord::StatementInvalid
         false
       end
 
       # Close then reopen the connection.
       def reconnect!
+        finish_pending_query
         super
         @connection.reset
         configure_connection
@@ -366,6 +411,7 @@ module ActiveRecord
       # Disconnects from the database if already connected. Otherwise, this
       # method does nothing.
       def disconnect!
+        finish_pending_query
         super
         @connection.close rescue nil
       end
@@ -651,6 +697,12 @@ module ActiveRecord
           initializer.run(records)
         end
 
+        def finish_pending_query
+          @prepared_statements_pool.finish_pending_query do |err, sql|
+            raise translate_exception_class(err, sql)
+          end
+        end
+
         def execute_and_clear(sql, name, binds)
           pgresult, pool_entry = if @prepared_statements
 
@@ -660,24 +712,15 @@ module ActiveRecord
               # Use already prepared statement
               exec_prepared(sql, name, binds, pool_entry)
             elsif (@counted_statements_pool[sql_key] += 1) >= 2
-              # Create and execute a prepared statement
-              begin
-                @connection.get_last_result
-                @counted_statements_pool.delete(sql_key)
-                pool_entry = @prepared_statements_pool.add(sql_key, sql)
-                @prepared_statements_pool.delete_oversized
-              rescue PG::Error => e
-                raise translate_exception_class(e, sql)
-              end
-
-              exec_prepared(sql, name, binds, pool_entry)
+              # Execute and create prepared statement
+              exec_counted(sql, name, binds, sql_key)
             else
               # Execute without prepared statement for this time
-              exec_counted(sql, name, binds)
+              exec_counted(sql, name, binds, false)
             end
           else
             # Don't use prepared statements at all
-            exec_counted(sql, name, binds)
+            exec_counted(sql, name, binds, false)
           end
 
           ret = yield(pgresult, pool_entry)
@@ -685,8 +728,9 @@ module ActiveRecord
           ret
         end
 
-        def exec_counted(sql, name, binds)
+        def exec_counted(sql, name, binds, sql_key)
           if without_prepared_statement?(binds)
+            finish_pending_query
             @connection.send_query(sql, [])
             type_casted_binds = binds
           else
@@ -700,15 +744,31 @@ module ActiveRecord
             end
             type_casted_values = type_casted_binds.map { |_, val| val }
 
+            finish_pending_query
             @connection.send_query(sql, type_casted_values, 0, enc_type_map)
           end
 
-          log(sql, name, type_casted_binds) do
+          if sql_key
+            @counted_statements_pool.delete(sql_key)
+            pool_entry = @prepared_statements_pool.add(sql_key, sql, enc_type_map)
+          else
+            @prepared_statements_pool.delete_oversized
+          end
+
+          pgresult = log(sql, name, type_casted_binds) do
             # do an extra call to PG::Connection#block, because although
             # get_last_result is GVL friendly, it doesn't stop on Ctrl-C
             @connection.block
             @connection.get_last_result
           end
+
+          @prepared_statements_pool.send_pending_query
+
+          [pgresult, pool_entry]
+        rescue ActiveRecord::StatementInvalid => e
+          @prepared_statements_pool.discard_pending_query
+          @prepared_statements_pool.delete_without_dealloc(sql_key) if sql_key
+          raise e
         end
 
         def exec_prepared(sql, name, binds, pool_entry)
@@ -724,6 +784,7 @@ module ActiveRecord
           end
           type_casted_values = type_casted_binds.map { |_, val| val }
 
+          finish_pending_query
           @connection.send_query_prepared(pool_entry.stmt_key, type_casted_values, 0, pool_entry.enc_type_map)
 
           pgresult = log(sql, name, type_casted_binds, pool_entry.stmt_key) do
