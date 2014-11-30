@@ -966,6 +966,10 @@ module ActiveRecord
         case value
         when String, Integer, ActiveRecord::StatementCache::Substitute
           @klass.columns_hash.include? column.to_s
+        when Array
+          connection.respond_to?(:substitute_array_at) &&
+            @klass.columns_hash.include?(column.to_s) &&
+            value.none? { |v| v.is_a?(Range) || v.nil? }
         else
           false
         end
@@ -979,8 +983,15 @@ module ActiveRecord
       binds = []
 
       bindable.each do |(column,value)|
-        binds.push [@klass.columns_hash[column.to_s], value]
-        new_opts[column] = connection.substitute_at(column)
+        column_obj = @klass.columns_hash[column.to_s]
+        if Array === value
+          column_obj = column_obj.to_array_column
+          value = value.map { |x| x.is_a?(Base) ? x.id : x }
+          new_opts[column] = connection.substitute_array_at(column)
+        else
+          new_opts[column] = connection.substitute_at(column)
+        end
+        binds.push [column_obj, value]
       end
 
       association_binds.each do |(column, value)|

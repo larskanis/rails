@@ -112,6 +112,7 @@ module ActiveRecord
     register_handler(Range, ->(attribute, value) { attribute.between(value) })
     register_handler(Relation, RelationHandler.new)
     register_handler(Array, ArrayHandler.new)
+    register_handler(Arel::Nodes::BindArrayParam, ->(attribute, value) { attribute.in(value) })
 
     def self.build(attribute, value)
       handler_for(value).call(attribute, value)

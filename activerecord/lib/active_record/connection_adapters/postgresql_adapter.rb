@@ -262,6 +262,10 @@ module ActiveRecord
         exec_query "TRUNCATE TABLE #{quote_table_name(table_name)}", name, []
       end
 
+      def substitute_array_at(column)
+        Arel::Nodes::BindArrayParam.new
+      end
+
       # Is this connection alive and ready for queries?
       def active?
         @connection.query 'SELECT 1'

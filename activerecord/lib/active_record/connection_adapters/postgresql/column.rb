@@ -15,6 +15,11 @@ module ActiveRecord
 
         @default_function = default_function
       end
+
+      def to_array_column
+        cast_type = PostgreSQL::OID::Array.new(@cast_type)
+        self.class.new(name, default, cast_type, sql_type + "[]", null, default_function)
+      end
     end
   end
 end
