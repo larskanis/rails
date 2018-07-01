@@ -39,8 +39,10 @@ module ActiveRecord
     #   Post.find_by_sql ["SELECT body FROM comments WHERE author = :user_id OR approved_by = :user_id", { :user_id => user_id }]
     def find_by_sql(sql, binds = [], preparable: nil, &block)
       result_set = connection.select_all(sanitize_sql(sql), "#{name} Load", binds, preparable: preparable)
-      column_types = result_set.column_types.dup
-      columns_hash.each_key { |k| column_types.delete k }
+      column_types = {}
+      (result_set.columns - columns_hash.keys).each do |column_name|
+        column_types[column_name] = result_set.column_type(column_name)
+      end
       message_bus = ActiveSupport::Notifications.instrumenter
 
       payload = {

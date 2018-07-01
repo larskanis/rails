@@ -77,17 +77,42 @@ module ActiveRecord
           end
         end
 
-        def exec_query(sql, name = "SQL", binds = [], prepare: false)
-          execute_and_clear(sql, name, binds, prepare: prepare) do |result|
-            types = {}
-            fields = result.fields
-            fields.each_with_index do |fname, i|
-              ftype = result.ftype i
-              fmod  = result.fmod i
-              types[fname] = get_oid_type(ftype, fmod, fname)
-            end
-            ActiveRecord::Result.new(fields, result.values, types)
+        def exec_query_deferred(sql, name = "SQL", binds = [], prepare: false)
+          result = nil
+          if without_prepared_statement?(binds)
+            result = exec_no_cache(sql, name, [])
+          elsif !prepare
+            result = exec_no_cache(sql, name, binds)
+          else
+            result = exec_cache(sql, name, binds)
           end
+          ActiveRecord::ConnectionAdapters::PostgreSQL::Result.new(result, self)
+        end
+
+        def exec_query_immediate(sql, name = "SQL", binds = [], prepare: false)
+          if without_prepared_statement?(binds)
+            result = exec_no_cache(sql, name, [])
+          elsif !prepare
+            result = exec_no_cache(sql, name, binds)
+          else
+            result = exec_cache(sql, name, binds)
+          end
+          types = {}
+          fields = result.fields
+          fields.each_with_index do |fname, i|
+            ftype = result.ftype i
+            fmod  = result.fmod i
+            types[fname] = get_oid_type(ftype, fmod, fname)
+          end
+          ret = ActiveRecord::Result.new(fields, result.values, types)
+          result.clear
+          ret
+        end
+
+        alias_method :exec_query, :exec_query_deferred
+
+        def self.switch_exec_query(type)
+          alias_method :exec_query, "exec_query_#{type}"
         end
 
         def exec_delete(sql, name = nil, binds = [])

@@ -6,6 +6,13 @@ GIT
     thor (0.20.0)
 
 GIT
+  remote: https://github.com/larskanis/ruby-pg.git
+  revision: 7d9c088dfddb0b4441238639868f822fc199bdad
+  branch: lazytuple
+  specs:
+    pg (1.1.0.pre20180124095233)
+
+GIT
   remote: https://github.com/matthewd/rb-inotify.git
   revision: 856730aad4b285969e8dd621e44808a7c5af4242
   branch: close-handling
@@ -350,9 +357,6 @@ GEM
     parser (2.5.1.0)
       ast (~> 2.4.0)
     path_expander (1.0.3)
-    pg (1.0.0)
-    pg (1.0.0-x64-mingw32)
-    pg (1.0.0-x86-mingw32)
     powerpack (0.1.1)
     psych (3.0.2)
     public_suffix (3.0.2)
@@ -540,7 +544,7 @@ DEPENDENCIES
   mocha
   mysql2 (>= 0.4.10)
   nokogiri (>= 1.8.1)
-  pg (>= 0.18.0)
+  pg (>= 1.1.0.pre)!
   psych (~> 3.0)
   puma
   que
